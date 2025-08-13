@@ -1,0 +1,25 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  rust-build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+    - uses: actions/checkout@v5
+    - name: Build
+      run: cargo build
+    - name: Format
+      run: cargo fmt --message-format human -- --check
+    - name: Clippy
+      run: cargo clippy
+    - name: Document
+      run: cargo doc
+    - name: Test
+      run: cargo test
