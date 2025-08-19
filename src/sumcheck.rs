@@ -3,12 +3,12 @@
 
 use crate::{Codec, FieldId, Size};
 use anyhow::{Context, anyhow};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use educe::Educe;
 use std::{
     fmt::{self, Formatter},
     io::{Cursor, Read},
 };
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
 /// A circuit, serialized according to the ad-hoc definition in [1] and [2].
 ///
@@ -219,7 +219,9 @@ pub struct SerializedFieldP128(u128);
 
 impl Codec for SerializedFieldP128 {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), anyhow::Error> {
-        bytes.write_u128::<LittleEndian>(self.0).context("failed to write u128")
+        bytes
+            .write_u128::<LittleEndian>(self.0)
+            .context("failed to write u128")
     }
 
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, anyhow::Error> {
@@ -296,7 +298,11 @@ mod tests {
         let mut cursor = Cursor::new(circuit_bytes.as_slice());
         let circuit = SerializedCircuit::decode(&mut cursor).unwrap();
 
-        assert_eq!(cursor.position() as usize, circuit_bytes.len(), "bytes left over after parsing circuit");
+        assert_eq!(
+            cursor.position() as usize,
+            circuit_bytes.len(),
+            "bytes left over after parsing circuit"
+        );
 
         // The test vector says "depth: 3" but the serialized struct indicates 2 layers. It's not
         // clear what exactly is meant by "depth" or num_layers.
