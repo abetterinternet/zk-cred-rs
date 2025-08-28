@@ -8,18 +8,19 @@ pub enum Error {
     BadKeyLength,
 }
 
-/// Field identifier. The encoding is variable length ([1]), but right now we only support the
-/// fixed length, 3 byte encodings. The specification is not clear about the width of a FieldId, but
-/// in the Longfellow implementation, it's 3.
-///
-/// FieldId(0) means NONE, which can be used to indicate the absence of a
-/// subfield.
+/// Field identifier. According to the draft specification, the encoding is of variable length ([1])
+/// but in the Longfellow implementation ([2]), they're always 3 bytes long.
 ///
 /// [1]: https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-00#section-7.2
+/// [2]: https://github.com/google/longfellow-zk/blob/902a955fbb22323123aac5b69bdf3442e6ea6f80/lib/proto/circuit.h#L309
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum FieldId {
-    /// The absence of a field, perhaps if some circuit or proof has no subfield?
+    /// The absence of a field, presumably if some circuit or proof has no subfield. This isn't
+    /// described in the specification (FieldID values start at 1) but is present in the Longfellow
+    /// implementation ([1]).
+    ///
+    /// [1]: https://github.com/google/longfellow-zk/blob/87474f308020535e57a778a82394a14106f8be5b/lib/proto/circuit.h#L55
     None = 0,
     /// NIST P256.
     P256 = 1,
@@ -79,6 +80,8 @@ struct FieldP128([u64; 3]);
 
 /// A serialized size, which is in the range [1, 2^24 -1] per [draft-google-cfrg-libzk-00 section
 /// 7][1]. Serialized in little endian order, occupying 3 bytes.
+///
+/// [1]: https://www.ietf.org/id/draft-google-cfrg-libzk-00.html#section-7
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord, Default)]
 pub struct Size(u32);
 
@@ -105,7 +108,7 @@ impl Codec for Size {
     }
 
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), anyhow::Error> {
-        if self.0 > 1 << 24 {
+        if self.0 >= (1 << 24) {
             return Err(anyhow!(
                 "size {} too big to be serialized in 3 bytes",
                 self.0
@@ -118,14 +121,22 @@ impl Codec for Size {
 }
 
 impl Size {
-    /// Encode this value as a delta from the previous value in some sequence.
+    /// Encode this value as a delta from the previous value in some sequence. The least significant
+    /// bit is used as the sign bit, with the actual value shifted up by one position ([1]).
+    ///
+    /// [1]: https://www.ietf.org/id/draft-google-cfrg-libzk-00.html#section-7.6-5
     pub fn encode_delta(&self, previous: Size, bytes: &mut Vec<u8>) -> Result<(), anyhow::Error> {
         let delta = if self.0 >= previous.0 {
             // Delta is positive: shift the delta up by one, leaving sign bit clear
-            (self.0 - previous.0) << 1
+            (self.0 - previous.0)
+                .checked_mul(2)
+                .ok_or_else(|| anyhow!("shift would overflow"))?
         } else {
             // Delta is negative: shift the delta up by one and set the sign bit
-            ((previous.0 - self.0) << 1) | 1
+            (previous.0 - self.0)
+                .checked_mul(2)
+                .ok_or_else(|| anyhow!("shift would overflow"))?
+                | 1
         };
 
         Size::from(delta).encode(bytes)
@@ -195,7 +206,7 @@ pub trait Codec: Sized + PartialEq + Eq + std::fmt::Debug {
             items
                 .len()
                 .try_into()
-                .context("vec length can't fit in a libzk Size")?,
+                .context("vector length too big for u32")?,
         )
         .encode(bytes)?;
         Self::encode_fixed_array(items, bytes)
@@ -263,5 +274,30 @@ mod tests {
     #[test]
     fn codec_roundtrip_size() {
         Size::from(12345).roundtrip();
+    }
+
+    #[test]
+    fn encode_size_too_big() {
+        // 1 << 24 is too big to be encoded as a 3 byte size, so this should fail
+        let mut bytes = Vec::new();
+        Size::from(1 << 24).encode(&mut bytes).unwrap_err();
+    }
+
+    #[test]
+    fn encode_delta_positive_overflow() {
+        // (1 << 31 - 0) << 1 will overflow u32, so this should fail
+        let mut bytes = Vec::new();
+        Size::from(1 << 31)
+            .encode_delta(Size::from(0), &mut bytes)
+            .unwrap_err();
+    }
+
+    #[test]
+    fn encode_delta_negative_overflow() {
+        // (1 << 31 - 0) << 1 will overflow u32, so this should fail
+        let mut bytes = Vec::new();
+        Size::from(0)
+            .encode_delta(Size::from(1 << 31), &mut bytes)
+            .unwrap_err();
     }
 }

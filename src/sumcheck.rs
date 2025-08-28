@@ -165,8 +165,8 @@ impl Codec for SerializedCircuitLayer {
 /// `corner` value corresponds to the draft's `struct Quad`.
 ///
 /// [1]: https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-00#section-7.6
-/// [1]: https://github.com/google/longfellow-zk/blob/87474f308020535e57a778a82394a14106f8be5b/lib/proto/circuit.h
-/// [2]: https://github.com/google/longfellow-zk/blob/87474f308020535e57a778a82394a14106f8be5b/lib/sumcheck/quad.h
+/// [2]: https://github.com/google/longfellow-zk/blob/87474f308020535e57a778a82394a14106f8be5b/lib/proto/circuit.h
+/// [3]: https://github.com/google/longfellow-zk/blob/87474f308020535e57a778a82394a14106f8be5b/lib/sumcheck/quad.h
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
 pub struct Quad {
     /// The position of ths gate in its layer.
@@ -214,6 +214,10 @@ impl Quad {
 }
 
 /// A serialized element of FieldP128.
+///
+/// TODO: convert this to and from [`crate::FieldP128`] so that we can do actual arithmetic in the
+/// field. The derived [`ff::PrimeField`] trait gives us a nice convenient `from_u128` method, but
+/// no convenient way to go back to u128 (just its generated Repr which is `[u8; 24]`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord, Default)]
 pub struct SerializedFieldP128(u128);
 
