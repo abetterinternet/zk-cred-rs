@@ -76,13 +76,13 @@ impl Codec for FieldId {
 #[PrimeFieldReprEndianness = "little"]
 // ff requires that the repr be an array of u64 and despite the fact that 128 bits should be big
 // enough, also requires 3 u64s.
-struct FieldP128([u64; 3]);
+pub struct FieldP128([u64; 3]);
 
 /// A serialized size, which is in the range [1, 2^24 -1] per [draft-google-cfrg-libzk-00 section
 /// 7][1]. Serialized in little endian order, occupying 3 bytes.
 ///
 /// [1]: https://www.ietf.org/id/draft-google-cfrg-libzk-00.html#section-7
-#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord, Default)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord, Default, Hash)]
 pub struct Size(u32);
 
 impl From<u32> for Size {
@@ -117,6 +117,18 @@ impl Codec for Size {
         bytes
             .write_u24::<LittleEndian>(self.0)
             .context("failed to write u24")
+    }
+}
+
+impl PartialEq<usize> for Size {
+    fn eq(&self, other: &usize) -> bool {
+        usize::from(*self) == *other
+    }
+}
+
+impl PartialOrd<usize> for Size {
+    fn partial_cmp(&self, other: &usize) -> Option<std::cmp::Ordering> {
+        usize::from(*self).partial_cmp(other)
     }
 }
 
