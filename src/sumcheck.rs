@@ -1,8 +1,8 @@
 //! Implements sumcheck, which is a system that for some circuit `C`, an input `x` and a witness
 //! `w`, `C(x, w) = 0`.
 
-use crate::circuit::Circuit;
-use anyhow::anyhow;
+use crate::{circuit::Circuit, fields::FieldElement};
+use anyhow::{Context, anyhow};
 use ff::PrimeField;
 use std::collections::BTreeMap;
 
@@ -13,15 +13,12 @@ pub trait Evaluate<FieldElement: PrimeField> {
     fn evaluate(&self, inputs: &[u128]) -> Result<Evaluation<FieldElement>, anyhow::Error>;
 }
 
-impl<FieldElement: PrimeField> Evaluate<FieldElement> for Circuit {
+impl<FE: FieldElement> Evaluate<FE> for Circuit {
     /// Evaluate the circuit with the provided inputs.
     ///
     /// Bugs: taking inputs as u128 is inadequate for larger fields like P256.
-    fn evaluate(&self, inputs: &[u128]) -> Result<Evaluation<FieldElement>, anyhow::Error> {
-        let inputs: Vec<_> = inputs
-            .iter()
-            .map(|input| FieldElement::from_u128(*input))
-            .collect();
+    fn evaluate(&self, inputs: &[u128]) -> Result<Evaluation<FE>, anyhow::Error> {
+        let inputs: Vec<_> = inputs.iter().map(|input| FE::from_u128(*input)).collect();
         // There are n layers of gates, but with the inputs, we have n + 1 layers of wires.
         let mut wires = Vec::with_capacity(self.layers.len() + 1);
 
@@ -32,7 +29,7 @@ impl<FieldElement: PrimeField> Evaluate<FieldElement> for Circuit {
         // layers are constructed to propagate the constant 1.
         //
         // https://eprint.iacr.org/2024/2010.pdf, section 2.1
-        wires.push([&[FieldElement::ONE], inputs.as_slice()].concat());
+        wires.push([&[FE::ONE], inputs.as_slice()].concat());
 
         for (layer_index, layer) in self
             .layers
@@ -48,18 +45,9 @@ impl<FieldElement: PrimeField> Evaluate<FieldElement> for Circuit {
             for (quad_index, quad) in layer.quads.iter().enumerate() {
                 // Evaluate this quad: look up its value in the constants table, then multiply that
                 // by the value of the input wires.
-                let quad_value = FieldElement::from_u128(u128::try_from(
-                    self.constant_table
-                        .get(usize::from(quad.const_table_index))
-                        .ok_or_else(|| {
-                            anyhow!(
-                                "quad {quad_index} on layer {layer_index} contains constant table \
-                                index {} not present in constant table",
-                                quad.const_table_index
-                            )
-                        })?
-                        .clone(),
-                )?);
+                let quad_value: FE = self.constant(quad.const_table_index).context(format!(
+                    "constant missing in quad {quad_index} on layer {layer_index}"
+                ))?;
                 let left_wire = wires[layer_index]
                     .get(usize::from(quad.left_wire))
                     .ok_or_else(|| {

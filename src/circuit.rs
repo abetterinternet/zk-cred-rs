@@ -1,6 +1,6 @@
 use crate::{
     Codec, Size,
-    fields::{FieldId, SerializedFieldElement},
+    fields::{FieldElement, FieldId, SerializedFieldElement},
 };
 use anyhow::{Context, anyhow};
 use educe::Educe;
@@ -113,6 +113,20 @@ impl Codec for Circuit {
         bytes.extend_from_slice(&self.id);
 
         Ok(())
+    }
+}
+
+impl Circuit {
+    /// Retrieve the requested constant from the circuit's constant table, if it exists.
+    pub fn constant<F: FieldElement>(&self, index: Size) -> Result<F, anyhow::Error> {
+        F::try_from(
+            &self
+                .constant_table
+                .get(usize::from(index))
+                .ok_or_else(|| anyhow!("index {} not present in constant table", index))?
+                .clone()
+                .0,
+        )
     }
 }
 
@@ -245,7 +259,7 @@ pub(crate) mod tests {
     use crate::{
         Codec, Size,
         circuit::{Circuit, Quad},
-        fields::FieldId,
+        fields::{FieldId, fieldp128::FieldP128, fieldp256::FieldP256},
     };
     use serde::Deserialize;
     use std::{
@@ -338,13 +352,28 @@ pub(crate) mod tests {
                 assert!(quad.left_wire < layer.num_wires);
                 assert!(quad.right_wire < layer.num_wires);
                 assert!(quad.const_table_index < circuit.constant_table.len());
+
+                // Force parsing of the constants
+                match circuit.field {
+                    FieldId::None => panic!("circuit can't have Field::None"),
+                    FieldId::P256 => {
+                        circuit
+                            .constant::<FieldP256>(quad.const_table_index)
+                            .unwrap();
+                    }
+                    FieldId::FP128 => {
+                        circuit
+                            .constant::<FieldP128>(quad.const_table_index)
+                            .unwrap();
+                    }
+                }
+
                 assert!(quad.gate_number < layer.quads.len());
             }
 
             quads_count += layer.quads.len();
         }
         assert_eq!(test_vector.quads as usize, quads_count);
-
         let mut encoded_again = Vec::new();
         circuit.encode(&mut encoded_again).unwrap();
         assert_eq!(encoded_again, test_vector.serialized_circuit);
