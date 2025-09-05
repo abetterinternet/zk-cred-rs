@@ -1,7 +1,9 @@
 use anyhow::{Context, anyhow};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use std::io::Cursor;
+use serde::{Deserialize, Serialize};
+use std::{fmt::Display, io::Cursor};
 
+pub mod fields;
 pub mod sumcheck;
 
 pub enum Error {
@@ -58,25 +60,16 @@ impl Codec for FieldId {
     }
 }
 
-/// FieldP128 is the field with modulus 2^128 - 2^108 + 1, described in [Section 7.2 of
-/// draft-google-cfrg-libzk-00][1]. The field does not get a name in the draft, but P128 comes from
-/// the longfellow implementation ([3]).
-///
-/// The generator was computed in SageMath as `GF(2^128-2^108+1).primitive_element()` (thanks to the
-/// hint in [`PrimeField::MULTIPLICATIVE_GENERATOR`]).
-///
-/// The endianness is per [Section 7.2.1 of draft-google-cfrg-libzk-00][2].
-///
-/// [1]: https://www.ietf.org/id/draft-google-cfrg-libzk-00.html#section-7.2
-/// [2]: https://www.ietf.org/id/draft-google-cfrg-libzk-00.html#section-7.2.1
-/// [3]: https://github.com/google/longfellow-zk/blob/main/lib/algebra/fp_p128.h
-#[derive(ff::PrimeField)]
-#[PrimeFieldModulus = "340282042402384805036647824275747635201"]
-#[PrimeFieldGenerator = "59"]
-#[PrimeFieldReprEndianness = "little"]
-// ff requires that the repr be an array of u64 and despite the fact that 128 bits should be big
-// enough, also requires 3 u64s.
-pub struct FieldP128([u64; 3]);
+impl FieldId {
+    /// Returns the number of bytes occupied by the encoding of a field element of this ID.
+    pub fn encoded_length(&self) -> usize {
+        match self {
+            FieldId::None => 0,
+            FieldId::P256 => 32,
+            FieldId::FP128 => 16,
+        }
+    }
+}
 
 /// A serialized size, which is in the range [1, 2^24 -1] per [draft-google-cfrg-libzk-00 section
 /// 7][1]. Serialized in little endian order, occupying 3 bytes.
@@ -129,6 +122,12 @@ impl PartialEq<usize> for Size {
 impl PartialOrd<usize> for Size {
     fn partial_cmp(&self, other: &usize) -> Option<std::cmp::Ordering> {
         usize::from(*self).partial_cmp(other)
+    }
+}
+
+impl Display for Size {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
     }
 }
 

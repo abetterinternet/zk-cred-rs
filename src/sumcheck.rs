@@ -1,7 +1,10 @@
 //! Implements sumcheck, which is a system that for some circuit `C`, an input `x` and a witness
 //! `w`, `C(x, w) = 0`.
 
-use crate::{Codec, FieldId, FieldP128, Size};
+use crate::{
+    Codec, FieldId, Size,
+    fields::{fieldp128::FieldP128, fieldp256::FieldP256},
+};
 use anyhow::{Context, anyhow};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use educe::Educe;
@@ -38,7 +41,7 @@ pub struct Circuit {
     num_layers: Size,
     /// Array of constants pointed to by the circuit's quads. For now, we cheat and always use
     /// `FieldP128`. Encoded as a variable length array.
-    constant_table: Vec<SerializedFieldP128>,
+    constant_table: Vec<SerializedFieldElement>,
     /// The layers of the circuit. There are num_layers of these, so this gets serialized as a fixed
     /// length array.
     layers: Vec<CircuitLayer>,
@@ -61,8 +64,15 @@ impl Codec for Circuit {
         let subfield_boundary = Size::decode(bytes)?;
         let num_inputs = Size::decode(bytes)?;
         let num_layers = Size::decode(bytes)?;
-        let constant_table =
-            SerializedFieldP128::decode_array(bytes).context("failed to decode constant table")?;
+        let num_constants = Size::decode(bytes)?;
+
+        // Decode constant table: first a count of elements, then each element's length is obtained
+        // from the field ID.
+        let mut constant_table = Vec::with_capacity(usize::from(num_constants));
+        for _ in 0..num_constants.into() {
+            constant_table.push(SerializedFieldElement::decode(field, bytes)?);
+        }
+
         let layers = CircuitLayer::decode_fixed_array(bytes, num_layers.into())
             .context("failed to decode layers")?;
         let mut id = [0u8; 32];
@@ -94,7 +104,14 @@ impl Codec for Circuit {
         self.subfield_boundary.encode(bytes)?;
         self.num_inputs.encode(bytes)?;
         self.num_layers.encode(bytes)?;
-        SerializedFieldP128::encode_array(&self.constant_table, bytes)?;
+
+        // Encode constant table: first a count of elements, then each element's length is obtained
+        // from the field ID.
+        Size::from(self.constant_table.len() as u32).encode(bytes)?;
+        for constant in &self.constant_table {
+            constant.encode(bytes)?;
+        }
+
         if usize::from(self.num_layers) != self.layers.len() {
             return Err(anyhow!("num_layers does not match length of layers array"));
         }
@@ -105,12 +122,21 @@ impl Codec for Circuit {
     }
 }
 
-impl Circuit {
+pub trait Evaluate<FieldElement: PrimeField> {
     /// Evaluate the circuit with the provided inputs.
-    pub fn evaluate(&self, inputs: &[u128]) -> Result<Evaluation, anyhow::Error> {
+    ///
+    /// Bugs: taking inputs as u128 is inadequate for larger fields like P256.
+    fn evaluate(&self, inputs: &[u128]) -> Result<Evaluation<FieldElement>, anyhow::Error>;
+}
+
+impl<FieldElement: PrimeField> Evaluate<FieldElement> for Circuit {
+    /// Evaluate the circuit with the provided inputs.
+    ///
+    /// Bugs: taking inputs as u128 is inadequate for larger fields like P256.
+    fn evaluate(&self, inputs: &[u128]) -> Result<Evaluation<FieldElement>, anyhow::Error> {
         let inputs: Vec<_> = inputs
             .iter()
-            .map(|input| FieldP128::from_u128(*input))
+            .map(|input| FieldElement::from_u128(*input))
             .collect();
         // There are n layers of gates, but with the inputs, we have n + 1 layers of wires.
         let mut wires = Vec::with_capacity(self.layers.len() + 1);
@@ -122,7 +148,7 @@ impl Circuit {
         // layers are constructed to propagate the constant 1.
         //
         // https://eprint.iacr.org/2024/2010.pdf, section 2.1
-        wires.push([&[FieldP128::ONE], inputs.as_slice()].concat());
+        wires.push([&[FieldElement::ONE], inputs.as_slice()].concat());
 
         for (layer_index, layer) in self
             .layers
@@ -138,31 +164,34 @@ impl Circuit {
             for (quad_index, quad) in layer.quads.iter().enumerate() {
                 // Evaluate this quad: look up its value in the constants table, then multiply that
                 // by the value of the input wires.
-                let quad_value = FieldP128::from(
-                    *self
-                        .constant_table
+                let quad_value = FieldElement::from_u128(u128::try_from(
+                    self.constant_table
                         .get(usize::from(quad.const_table_index))
                         .ok_or_else(|| {
                             anyhow!(
                                 "quad {quad_index} on layer {layer_index} contains constant table \
-                                index {:?} not present in constant table",
+                                index {} not present in constant table",
                                 quad.const_table_index
                             )
-                        })?,
-                );
-                let left_wire = wires[layer_index].get(usize::from(quad.left_wire)).ok_or_else(|| {
-                    anyhow!(
-                        "quad {quad_index} on layer {layer_index} contains left wire index {:?} \
+                        })?
+                        .clone(),
+                )?);
+                let left_wire = wires[layer_index]
+                    .get(usize::from(quad.left_wire))
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "quad {quad_index} on layer {layer_index} contains left wire index {} \
                         not present in previous layer of circuit {:?}",
-                        quad.left_wire, wires[layer_index],
-                    )
-                })?;
+                            quad.left_wire,
+                            wires[layer_index],
+                        )
+                    })?;
                 let right_wire = wires[layer_index]
                     .get(usize::from(quad.right_wire))
                     .ok_or_else(|| {
                         anyhow!(
                             "quad {quad_index} on layer {layer_index} contains right wire index \
-                            {:?} not present in previous layer of circuit {:?}",
+                            {} not present in previous layer of circuit {:?}",
                             quad.right_wire,
                             wires[layer_index],
                         )
@@ -187,15 +216,15 @@ impl Circuit {
 
 /// The evaluation of a circuit.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Evaluation {
+pub struct Evaluation<FieldElement> {
     /// The value of each of the wires of the circuit after evaluation. An n-layer circuit has n+1
     /// layers of wire values. Layer index 0 is the outputs and layer index n is the inputs. The
     /// length of each layer depends on the number of gates on each later.
-    wires: Vec<Vec<FieldP128>>,
+    wires: Vec<Vec<FieldElement>>,
 }
 
-impl Evaluation {
-    pub fn outputs(&self) -> &[FieldP128] {
+impl<FieldElement> Evaluation<FieldElement> {
+    pub fn outputs(&self) -> &[FieldElement] {
         self.wires[0].as_slice()
     }
 }
@@ -324,33 +353,37 @@ impl Quad {
     }
 }
 
-/// A serialized element of FieldP128.
+/// A serialized field element.
 ///
 /// TODO: convert this to and from [`crate::FieldP128`] so that we can do actual arithmetic in the
 /// field. The derived [`ff::PrimeField`] trait gives us a nice convenient `from_u128` method, but
 /// no convenient way to go back to u128 (just its generated Repr which is `[u8; 24]`).
-#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord, Default)]
-pub struct SerializedFieldP128(u128);
+#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+pub struct SerializedFieldElement(Vec<u8>);
 
-impl Codec for SerializedFieldP128 {
+impl SerializedFieldElement {
+    // Annoyingly we can't implement Codec for this: encoding or decoding a field element requires
+    // knowledge of the field element in use by the circuit, which means we can't decode without
+    // some context.
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), anyhow::Error> {
-        bytes
-            .write_u128::<LittleEndian>(self.0)
-            .context("failed to write u128")
+        u8::encode_fixed_array(&self.0, bytes)
     }
 
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, anyhow::Error> {
-        Ok(Self(
-            bytes
-                .read_u128::<LittleEndian>()
-                .context("failed to read u128")?,
-        ))
+    fn decode(field_id: FieldId, bytes: &mut Cursor<&[u8]>) -> Result<Self, anyhow::Error> {
+        Ok(Self(u8::decode_fixed_array(
+            bytes,
+            field_id.encoded_length(),
+        )?))
     }
 }
 
-impl From<SerializedFieldP128> for FieldP128 {
-    fn from(value: SerializedFieldP128) -> Self {
-        FieldP128::from_u128(value.0)
+impl TryFrom<SerializedFieldElement> for u128 {
+    type Error = anyhow::Error;
+
+    fn try_from(value: SerializedFieldElement) -> Result<Self, Self::Error> {
+        Ok(u128::from_le_bytes(value.0.try_into().map_err(|_| {
+            anyhow!("byte array wrong length for u128")
+        })?))
     }
 }
 
@@ -360,18 +393,55 @@ mod tests {
     use serde::Deserialize;
     use std::{fs::File, io::BufReader};
 
+    /// JSON descriptor of a circuit test vector.
     #[derive(Debug, Clone, Deserialize)]
     struct CircuitTestVector {
-        field: u32,
-        serialized: String,
+        #[allow(dead_code)]
+        description: String,
+        /// Field used by the circuit.
+        field: u8,
+        /// Depth of the circuit. This is wire layers, not gate layers.
         depth: u32,
+        /// Total quads in the circuit.
         quads: u32,
+        /// Not yet clear what this is.
         _terms: u32,
+        /// The serialized circuit, stored in a file alongside the JSON descriptor.
+        #[serde(default)]
+        serialized_circuit: Vec<u8>,
     }
 
     #[test]
-    fn codec_roundtrip_p128() {
-        SerializedFieldP128(0xffffefffffffffffffffffffffffffff).roundtrip();
+    fn codec_roundtrip_field_p128() {
+        let element = SerializedFieldElement(Vec::from([
+            0xff, 0xff, 0xfe, 0xff, 0xff, 0xff, 0xfe, 0xff, 0xff, 0xff, 0xfe, 0xff, 0xff, 0xff,
+            0xfe, 0xff,
+        ]));
+
+        let mut encoded = Vec::new();
+        element.encode(&mut encoded).unwrap();
+
+        let decoded =
+            SerializedFieldElement::decode(FieldId::FP128, &mut Cursor::new(&encoded)).unwrap();
+
+        assert_eq!(element, decoded)
+    }
+
+    #[test]
+    fn codec_roundtrip_field_p256() {
+        let element = SerializedFieldElement(Vec::from([
+            0xff, 0xff, 0xfe, 0xff, 0xff, 0xff, 0xfe, 0xff, 0xff, 0xff, 0xfe, 0xff, 0xff, 0xff,
+            0xfe, 0xff, 0xff, 0xff, 0xfe, 0xff, 0xff, 0xff, 0xfe, 0xff, 0xff, 0xff, 0xfe, 0xff,
+            0xff, 0xff, 0xfe, 0xff,
+        ]));
+
+        let mut encoded = Vec::new();
+        element.encode(&mut encoded).unwrap();
+
+        let decoded =
+            SerializedFieldElement::decode(FieldId::P256, &mut Cursor::new(&encoded)).unwrap();
+
+        assert_eq!(element, decoded)
     }
 
     #[test]
@@ -402,38 +472,34 @@ mod tests {
     }
 
     fn decode_circuit_test_vector(test_vector_name: &'static str) -> (CircuitTestVector, Circuit) {
-        let test_vector: CircuitTestVector = serde_json::from_reader(BufReader::new(
-            File::open(format!("test-vectors/circuit/{test_vector_name}.json")).unwrap(),
+        let test_vector_path = format!("test-vectors/circuit/{test_vector_name}");
+
+        let mut test_vector: CircuitTestVector = serde_json::from_reader(BufReader::new(
+            File::open(format!("{test_vector_path}.json")).unwrap(),
         ))
         .unwrap();
 
-        // We only support FieldId 6 right now
-        assert_eq!(test_vector.field, 6);
+        File::open(format!("{test_vector_path}.circuit"))
+            .unwrap()
+            .read_to_end(&mut test_vector.serialized_circuit)
+            .unwrap();
 
-        let circuit_bytes = hex::decode(&test_vector.serialized).unwrap();
-
-        let mut cursor = Cursor::new(circuit_bytes.as_slice());
+        let mut cursor = Cursor::new(test_vector.serialized_circuit.as_slice());
         let circuit = Circuit::decode(&mut cursor).unwrap();
 
         assert_eq!(
             cursor.position() as usize,
-            circuit_bytes.len(),
+            test_vector.serialized_circuit.len(),
             "bytes left over after parsing circuit"
         );
 
         (test_vector, circuit)
     }
 
-    #[test]
-    fn roundtrip_circuit_test_vector() {
-        let (test_vector, circuit) =
-            decode_circuit_test_vector("longfellow-87474f308020535e57a778a82394a14106f8be5b-1");
+    fn roundtrip_circuit_test_vector(name: &'static str) {
+        let (test_vector, circuit) = decode_circuit_test_vector(name);
 
-        // We only support FieldId 6 right now
-        assert_eq!(test_vector.field, 6);
-
-        // The test vector says "depth: 3" but the serialized struct indicates 2 layers. It's not
-        // clear what exactly is meant by "depth" or num_layers.
+        assert_eq!(FieldId::try_from(test_vector.field).unwrap(), circuit.field);
         assert_eq!(Size::from(test_vector.depth - 1), circuit.num_layers);
         assert_eq!(test_vector.depth as usize - 1, circuit.layers.len());
 
@@ -452,16 +518,28 @@ mod tests {
 
         let mut encoded_again = Vec::new();
         circuit.encode(&mut encoded_again).unwrap();
-        assert_eq!(hex::encode(encoded_again), test_vector.serialized);
+        assert_eq!(encoded_again, test_vector.serialized_circuit);
     }
 
     #[test]
-    fn evaluate_circuit_true() {
+    fn roundtrip_circuit_longfellow_rfc_1() {
+        roundtrip_circuit_test_vector("longfellow-rfc-1-87474f308020535e57a778a82394a14106f8be5b");
+    }
+
+    #[test]
+    fn roundtrip_circuit_test_vector_mac() {
+        roundtrip_circuit_test_vector(
+            "longfellow-mac-circuit-902a955fbb22323123aac5b69bdf3442e6ea6f80-1",
+        );
+    }
+
+    #[test]
+    fn evaluate_circuit_longfellow_rfc_1_true() {
         let (_, circuit) =
-            decode_circuit_test_vector("longfellow-87474f308020535e57a778a82394a14106f8be5b-1");
+            decode_circuit_test_vector("longfellow-rfc-1-87474f308020535e57a778a82394a14106f8be5b");
 
         // This circuit verifies that 2n = (s-2)m^2 - (s - 4)*m. For example, C(45, 5, 6) = 0.
-        let evaluation = circuit.evaluate(&[45, 5, 6]).unwrap();
+        let evaluation: Evaluation<FieldP128> = circuit.evaluate(&[45, 5, 6]).unwrap();
 
         // Output size should match circuit serialization and values should all be zero
         assert_eq!(circuit.num_outputs, evaluation.wires[0].len());
@@ -478,9 +556,9 @@ mod tests {
     }
 
     #[test]
-    fn evaluate_circuit_false() {
+    fn evaluate_circuit_longfellow_rfc_1_false() {
         let (_, circuit) =
-            decode_circuit_test_vector("longfellow-87474f308020535e57a778a82394a14106f8be5b-1");
+            decode_circuit_test_vector("longfellow-rfc-1-87474f308020535e57a778a82394a14106f8be5b");
 
         // Evaluate with other values. At least one output element should be nonzero.
         assert!(
@@ -489,7 +567,7 @@ mod tests {
                 .unwrap()
                 .outputs()
                 .iter()
-                .any(|output| *output != FieldP128::ZERO)
+                .any(|output: &FieldP128| *output != FieldP128::ZERO)
         );
     }
 }
