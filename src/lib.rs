@@ -4,10 +4,7 @@ use std::{fmt::Display, io::Cursor};
 
 pub mod circuit;
 pub mod fields;
-
-pub enum Error {
-    BadKeyLength,
-}
+pub mod transcript;
 
 /// A serialized size, which is in the range [1, 2^24 -1] per [draft-google-cfrg-libzk-00 section
 /// 7][1]. Serialized in little endian order, occupying 3 bytes.
