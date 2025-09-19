@@ -1,7 +1,7 @@
 //! Implements sumcheck, which is a system that for some circuit `C`, an input `x` and a witness
 //! `w`, `C(x, w) = 0`.
 
-use crate::{circuit::Circuit, fields::FieldElement};
+use crate::{circuit::Circuit, fields::FieldElement, transcript::Transcript};
 use anyhow::{Context, anyhow};
 use ff::PrimeField;
 use std::collections::BTreeMap;
@@ -99,6 +99,15 @@ impl<FieldElement> Evaluation<FieldElement> {
     pub fn outputs(&self) -> &[FieldElement] {
         self.wires[0].as_slice()
     }
+}
+
+fn sumcheck<FieldElement>(
+    circuit: &Circuit,
+    evaluation: &Evaluation<FieldElement>,
+    pad: Vec<u8>, /*TODO what is pad*/
+    transcript: &Transcript<FieldElement>,
+) -> Result<(), anyhow::Error> {
+    todo!()
 }
 
 #[cfg(test)]
