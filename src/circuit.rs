@@ -26,15 +26,16 @@ pub struct Circuit {
     pub(crate) num_copies: Size,
     /// Number of public inputs.
     pub(crate) num_public_inputs: Size,
-    /// Lease input wire not known to be in the subfield (what's the subfield though?)
+    /// Least input wire not known to be in the subfield (what's the subfield though?)
     pub(crate) subfield_boundary: Size,
     /// Number of inputs, including witnesses. Always >= num_public_inputs, which is the index of
     /// of the first private input.
     pub(crate) num_inputs: Size,
     /// Number of layers in the circuit.
     pub(crate) num_layers: Size,
-    /// Array of constants pointed to by the circuit's quads. For now, we cheat and always use
-    /// `FieldP128`. Encoded as a variable length array.
+    /// Array of constants pointed to by the circuit's quads. Encoded as a variable length array of
+    /// [`SerializedFieldElement`], which can then be decoded into a particular [`FieldElement`]
+    /// implementation based on the value of `field`.
     pub(crate) constant_table: Vec<SerializedFieldElement>,
     /// The layers of the circuit. There are num_layers of these, so this gets serialized as a fixed
     /// length array.

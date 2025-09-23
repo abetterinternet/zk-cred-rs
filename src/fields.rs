@@ -69,7 +69,7 @@ impl FieldId {
     }
 }
 
-/// A serialized field element. The encoded length depents on the [`FieldId`].
+/// A serialized field element. The encoded length depends on the [`FieldId`].
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub struct SerializedFieldElement(pub Vec<u8>);
 
@@ -106,7 +106,7 @@ pub mod fieldp256 {
     ///
     /// The generator is computed in [SageMath][1].
     ///
-    /// [1]: https://sagecell.sagemath.org/?z=eJwFwbERw0AIBMB29IkHOA64ElzIjxQp0Chw-d793u8-93O4sxU2CjewIqcrSp1ZSqU1G4TZlCfSGTJ4ukig4LCZalMPIfr6XPt3rD_4GRTe&lang=sage&interacts=eJyLjgUAARUAuQ==
+    /// [1]: https://sagecell.sagemath.org/?z=eJwFwckNg0AQBMB04IOmp-dMwITh1z5WMgghRPyu2j8L4Nkq1Qqhh1plaHSaRVubpCedIhUwGlxbCEO7k0FQqiKls5ztWLfrnsd85ju-4zeOcT7L-gdkdBh6&lang=sage&interacts=eJyLjgUAARUAuQ==
     #[derive(ff::PrimeField)]
     #[PrimeFieldModulus = "115792089210356248762697446949407573530086143415290314195533631308867097853951"]
     #[PrimeFieldGenerator = "6"]
@@ -144,14 +144,15 @@ pub mod fieldp128 {
     /// draft-google-cfrg-libzk-00][1]. The field does not get a name in the draft, but P128 comes from
     /// the longfellow implementation ([3]).
     ///
-    /// The generator was computed in SageMath as `GF(2^128-2^108+1).primitive_element()` (thanks to the
-    /// hint in [`PrimeField::MULTIPLICATIVE_GENERATOR`]).
+    /// The generator was computed in [SageMath][4] (thanks to the hint in
+    /// [`PrimeField::MULTIPLICATIVE_GENERATOR`]).
     ///
     /// The endianness is per [Section 7.2.1 of draft-google-cfrg-libzk-00][2].
     ///
     /// [1]: https://www.ietf.org/id/draft-google-cfrg-libzk-00.html#section-7.2
     /// [2]: https://www.ietf.org/id/draft-google-cfrg-libzk-00.html#section-7.2.1
     /// [3]: https://github.com/google/longfellow-zk/blob/main/lib/algebra/fp_p128.h
+    /// [4]: https://sagecell.sagemath.org/?z=eJxzd9MwijM0stAFkgYW2oaaegVFmbmZJZllqfGpOam5qXklGpoAwO8LXQ==&lang=sage&interacts=eJyLjgUAARUAuQ==
     #[derive(ff::PrimeField)]
     #[PrimeFieldModulus = "340282042402384805036647824275747635201"]
     #[PrimeFieldGenerator = "59"]

@@ -53,7 +53,7 @@ impl<FE: FieldElement> Evaluate<FE> for Circuit {
                     .ok_or_else(|| {
                         anyhow!(
                             "quad {quad_index} on layer {layer_index} contains left wire index {} \
-                        not present in previous layer of circuit {:?}",
+                            not present in previous layer of circuit {:?}",
                             quad.left_wire,
                             wires[layer_index],
                         )
@@ -91,7 +91,7 @@ impl<FE: FieldElement> Evaluate<FE> for Circuit {
 pub struct Evaluation<FieldElement> {
     /// The value of each of the wires of the circuit after evaluation. An n-layer circuit has n+1
     /// layers of wire values. Layer index 0 is the outputs and layer index n is the inputs. The
-    /// length of each layer depends on the number of gates on each later.
+    /// length of each layer depends on the number of gates on each layer.
     wires: Vec<Vec<FieldElement>>,
 }
 
