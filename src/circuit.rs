@@ -5,6 +5,7 @@ use crate::{
 use anyhow::{Context, anyhow};
 use educe::Educe;
 use std::{
+    collections::BTreeMap,
     fmt::{self, Formatter},
     io::{Cursor, Read},
 };
@@ -128,6 +129,95 @@ impl Circuit {
                 .clone()
                 .0,
         )
+    }
+
+    /// Evaluate the circuit with the provided inputs.
+    ///
+    /// Bugs: taking inputs as u128 is inadequate for larger fields like P256.
+    pub fn evaluate<FE: FieldElement>(
+        &self,
+        inputs: &[u128],
+    ) -> Result<Evaluation<FE>, anyhow::Error> {
+        let inputs: Vec<_> = inputs.iter().map(|input| FE::from_u128(*input)).collect();
+        // There are n layers of gates, but with the inputs, we have n + 1 layers of wires.
+        let mut wires = Vec::with_capacity(self.layers.len() + 1);
+
+        // "By convention, the input wire Vj[0] = 1 for all layers, and thus the quad representation
+        // handles the classic add and multiplication gates in a uniform manner."
+        // This is because we represent constants in the circuit by multiplying the input 1 by
+        // whatever the value we need. We apply this fixup only for the first layer, as subsequent
+        // layers are constructed to propagate the constant 1.
+        //
+        // https://eprint.iacr.org/2024/2010.pdf, section 2.1
+        wires.push([&[FE::ONE], inputs.as_slice()].concat());
+
+        for (layer_index, layer) in self
+            .layers
+            .iter()
+            // In the serialized format, the input layer comes last, so reverse the layers iterator.
+            .rev()
+            .enumerate()
+        {
+            // A single gate may receive contributions from multiple quads, so accumulate gate
+            // evaluations into a BTreeMap keyed by gate number, which can then be efficiently
+            // converted to a vector of gate output values.
+            let mut gate_outputs = BTreeMap::new();
+            for (quad_index, quad) in layer.quads.iter().enumerate() {
+                // Evaluate this quad: look up its value in the constants table, then multiply that
+                // by the value of the input wires.
+                let quad_value: FE = self.constant(quad.const_table_index).context(format!(
+                    "constant missing in quad {quad_index} on layer {layer_index}"
+                ))?;
+                let left_wire = wires[layer_index]
+                    .get(usize::from(quad.left_wire))
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "quad {quad_index} on layer {layer_index} contains left wire index {} \
+                            not present in previous layer of circuit {:?}",
+                            quad.left_wire,
+                            wires[layer_index],
+                        )
+                    })?;
+                let right_wire = wires[layer_index]
+                    .get(usize::from(quad.right_wire))
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "quad {quad_index} on layer {layer_index} contains right wire index \
+                            {} not present in previous layer of circuit {:?}",
+                            quad.right_wire,
+                            wires[layer_index],
+                        )
+                    })?;
+
+                let quad_output = quad_value * left_wire * right_wire;
+
+                gate_outputs
+                    .entry(quad.gate_number)
+                    .and_modify(|v| *v += quad_output)
+                    .or_insert(quad_output);
+            }
+
+            wires.push(gate_outputs.into_values().collect());
+        }
+
+        // Reverse wires so that the inputs come last and the outputs come first.
+        wires.reverse();
+        Ok(Evaluation { wires })
+    }
+}
+
+/// The evaluation of a circuit.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Evaluation<FieldElement> {
+    /// The value of each of the wires of the circuit after evaluation. An n-layer circuit has n+1
+    /// layers of wire values. Layer index 0 is the outputs and layer index n is the inputs. The
+    /// length of each layer depends on the number of gates on each layer.
+    wires: Vec<Vec<FieldElement>>,
+}
+
+impl<FieldElement> Evaluation<FieldElement> {
+    pub fn outputs(&self) -> &[FieldElement] {
+        self.wires[0].as_slice()
     }
 }
 
@@ -259,9 +349,10 @@ impl Quad {
 pub(crate) mod tests {
     use crate::{
         Codec, Size,
-        circuit::{Circuit, Quad},
+        circuit::{Circuit, Evaluation, Quad},
         fields::{FieldId, fieldp128::FieldP128, fieldp256::FieldP256},
     };
+    use ff::Field;
     use serde::Deserialize;
     use std::{
         fs::File,
@@ -308,7 +399,7 @@ pub(crate) mod tests {
         pub(crate) quads: u32,
         /// Not yet clear what this is.
         pub(crate) _terms: u32,
-        /// The serialized circuit, stored in a file alongside the JSON descriptor.
+        /// The serialized circuit, decompressed from a file alongside the JSON descriptor.
         #[serde(default)]
         pub(crate) serialized_circuit: Vec<u8>,
     }
@@ -322,11 +413,13 @@ pub(crate) mod tests {
             ))
             .unwrap();
 
-            File::open(format!("{test_vector_path}.circuit"))
+            let mut compressed = Vec::new();
+            File::open(format!("{test_vector_path}.circuit.zst"))
                 .unwrap()
-                .read_to_end(&mut test_vector.serialized_circuit)
+                .read_to_end(&mut compressed)
                 .unwrap();
 
+            test_vector.serialized_circuit = zstd::decode_all(compressed.as_slice()).unwrap();
             let mut cursor = Cursor::new(test_vector.serialized_circuit.as_slice());
             let circuit = Circuit::decode(&mut cursor).unwrap();
 
@@ -389,6 +482,44 @@ pub(crate) mod tests {
     fn roundtrip_circuit_test_vector_mac() {
         roundtrip_circuit_test_vector(
             "longfellow-mac-circuit-902a955fbb22323123aac5b69bdf3442e6ea6f80-1",
+        );
+    }
+
+    #[test]
+    fn evaluate_circuit_longfellow_rfc_1_true() {
+        let (_, circuit) =
+            CircuitTestVector::decode("longfellow-rfc-1-87474f308020535e57a778a82394a14106f8be5b");
+
+        // This circuit verifies that 2n = (s-2)m^2 - (s - 4)*m. For example, C(45, 5, 6) = 0.
+        let evaluation: Evaluation<FieldP128> = circuit.evaluate(&[45, 5, 6]).unwrap();
+
+        // Output size should match circuit serialization and values should all be zero
+        assert_eq!(circuit.num_outputs, evaluation.wires[0].len());
+        for output in evaluation.outputs() {
+            assert_eq!(*output, FieldP128::ZERO);
+        }
+
+        // The remaining wire layers should match wire counts claimed by circuit serialization
+        for (circuit_layer, evaluation_layer) in
+            circuit.layers.iter().zip(evaluation.wires[1..].iter())
+        {
+            assert_eq!(circuit_layer.num_wires, evaluation_layer.len());
+        }
+    }
+
+    #[test]
+    fn evaluate_circuit_longfellow_rfc_1_false() {
+        let (_, circuit) =
+            CircuitTestVector::decode("longfellow-rfc-1-87474f308020535e57a778a82394a14106f8be5b");
+
+        // Evaluate with other values. At least one output element should be nonzero.
+        assert!(
+            circuit
+                .evaluate(&[45, 5, 7])
+                .unwrap()
+                .outputs()
+                .iter()
+                .any(|output: &FieldP128| *output != FieldP128::ZERO)
         );
     }
 }

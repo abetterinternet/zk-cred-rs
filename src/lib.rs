@@ -4,7 +4,6 @@ use std::{fmt::Display, io::Cursor};
 
 pub mod circuit;
 pub mod fields;
-pub mod sumcheck;
 
 pub enum Error {
     BadKeyLength,
