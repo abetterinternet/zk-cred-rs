@@ -159,12 +159,10 @@ impl FiatShamirPseudoRandomFunction {
     pub fn new(seed: &[u8]) -> Result<Self, anyhow::Error> {
         let cipher = Aes256::new_from_slice(seed).context("bad key length")?;
 
-        let current_block = Self::current_block(&cipher, 0);
-
         Ok(Self {
             cipher,
             position: 0,
-            current_block,
+            current_block: Vec::new(),
         })
     }
 
@@ -185,7 +183,7 @@ impl FiatShamirPseudoRandomFunction {
     }
 
     /// Generate a field element by rejection sampling and return how many rejections were observed.
-    pub fn sample_field_element_counting_rejections<FE: FieldElement>(&mut self) -> (FE, usize) {
+    fn sample_field_element_counting_rejections<FE: FieldElement>(&mut self) -> (FE, usize) {
         let mut rejections = 0;
         let field_element = loop {
             // Some fields like P521 have a bit count that isn't congruent to 8. We sample
@@ -323,8 +321,9 @@ mod tests {
 
     #[test]
     fn sample_field_with_excess_bits_without_rejections() {
-        // FieldP521 has excess bits, but every 521 bit integer is a valid field element, so if
-        // excess bit masking is correctly implemented, we expect 0 rejections.
+        // FieldP521 has excess bits, but every 521 bit integer except the field prime itself, is a
+        // valid field element, so if excess bit masking is correctly implemented, the chance of
+        // rejections is negligible.
         let mut fsprf = FiatShamirPseudoRandomFunction::new(&[0; 32]).unwrap();
         for _ in 0..100 {
             let (_, rejections) = fsprf.sample_field_element_counting_rejections::<FieldP521>();
