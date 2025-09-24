@@ -235,7 +235,11 @@ impl Circuit {
             // expect that Q and Z are disjoint. We verify the latter in
             // roundtrip_circuit_test_vector.
             for gate_index in z_gate_indexes {
-                assert!(bool::from(gate_outputs[gate_index].is_zero()));
+                if !bool::from(gate_outputs[gate_index].is_zero()) {
+                    return Err(anyhow!(
+                        "in-circuit assertion failed at layer {layer_index}, gate {gate_index}"
+                    ));
+                }
             }
 
             wires.push(gate_outputs);
@@ -746,19 +750,19 @@ pub(crate) mod tests {
     }
 
     #[test]
-    #[should_panic]
     fn evaluate_assertion_pass_partial() {
         // The input value of 1 should cause the in-circuit assertion to fail. The circuit output is still zero.
         let circuit = make_assertion_test_circuit();
-        let _ = circuit.evaluate::<FieldP128>(&[1]);
+        let error = circuit.evaluate::<FieldP128>(&[1]).unwrap_err();
+        assert!(error.to_string().contains("assertion failed"));
     }
 
     #[test]
-    #[should_panic]
     fn evaluate_assertion_fail() {
         // This input should cause both the in-circuit assertion to fail and the circuit output be non-zero.
         let circuit = make_assertion_test_circuit();
-        let _ = circuit.evaluate::<FieldP128>(&[5]);
+        let error = circuit.evaluate::<FieldP128>(&[5]).unwrap_err();
+        assert!(error.to_string().contains("assertion failed"));
     }
 
     #[test]
