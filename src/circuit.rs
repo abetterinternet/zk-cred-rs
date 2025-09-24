@@ -5,7 +5,7 @@ use crate::{
 use anyhow::{Context, anyhow};
 use educe::Educe;
 use std::{
-    collections::BTreeMap,
+    collections::HashSet,
     fmt::{self, Formatter},
     io::{Cursor, Read},
 };
@@ -151,6 +151,9 @@ impl Circuit {
         // https://eprint.iacr.org/2024/2010.pdf, section 2.1
         wires.push([&[FE::ONE], inputs.as_slice()].concat());
 
+        // We are iterating over layers in reverse, so the output layer is at the end of the
+        // iterator
+        let output_layer_index = usize::from(self.num_layers) - 1;
         for (layer_index, layer) in self
             .layers
             .iter()
@@ -158,46 +161,82 @@ impl Circuit {
             .rev()
             .enumerate()
         {
-            // A single gate may receive contributions from multiple quads, so accumulate gate
-            // evaluations into a BTreeMap keyed by gate number, which can then be efficiently
-            // converted to a vector of gate output values.
-            let mut gate_outputs = BTreeMap::new();
+            let next_layer_num_wires = if layer_index == output_layer_index {
+                self.num_outputs
+            } else {
+                self.layers[
+                    // index from the end because we are iterating self.layers in reverse
+                    output_layer_index - layer_index
+                    // next layer of the circuit is -1
+                    - 1
+                ]
+                .num_wires
+            };
+            // A single gate may receive contributions from multiple quads, so preallocate a vector
+            // of length matching the next layer's number of input wires, and accumulate quad
+            // outputs into that.
+            // Depending on the circuit compiler, it's possible that there will be unused elements
+            // in this vector.
+            let mut gate_outputs = vec![FE::ZERO; next_layer_num_wires.into()];
+
+            // Note which gates receive contributions from Z quads.
+            let mut z_gate_indexes = HashSet::new();
+
             for (quad_index, quad) in layer.quads.iter().enumerate() {
                 // Evaluate this quad: look up its value in the constants table, then multiply that
                 // by the value of the input wires.
                 let quad_value: FE = self.constant(quad.const_table_index).context(format!(
                     "constant missing in quad {quad_index} on layer {layer_index}"
                 ))?;
+
+                if quad_value.is_zero().into() {
+                    z_gate_indexes.insert(usize::from(quad.gate_index));
+                }
+
                 let left_wire = wires[layer_index]
-                    .get(usize::from(quad.left_wire))
+                    .get(usize::from(quad.left_wire_index))
                     .ok_or_else(|| {
                         anyhow!(
                             "quad {quad_index} on layer {layer_index} contains left wire index {} \
                             not present in previous layer of circuit {:?}",
-                            quad.left_wire,
+                            quad.left_wire_index,
                             wires[layer_index],
                         )
                     })?;
                 let right_wire = wires[layer_index]
-                    .get(usize::from(quad.right_wire))
+                    .get(usize::from(quad.right_wire_index))
                     .ok_or_else(|| {
                         anyhow!(
-                            "quad {quad_index} on layer {layer_index} contains right wire index \
-                            {} not present in previous layer of circuit {:?}",
-                            quad.right_wire,
+                            "quad {quad_index} on layer {layer_index} contains right wire index {} \
+                            not present in previous layer of circuit {:?}",
+                            quad.right_wire_index,
                             wires[layer_index],
                         )
                     })?;
 
                 let quad_output = quad_value * left_wire * right_wire;
 
-                gate_outputs
-                    .entry(quad.gate_number)
-                    .and_modify(|v| *v += quad_output)
-                    .or_insert(quad_output);
+                // Specification interpretation verification: this should never happen. We check
+                // this condition in roundtrip_circuit_test_vector, but not in deserialization.
+                if quad.gate_index >= next_layer_num_wires {
+                    panic!(
+                        "quad {quad_index} on layer {layer_index} contains gate index {} exceeding \
+                        the next layer's number of input wires {next_layer_num_wires}",
+                        quad.gate_index,
+                    )
+                }
+                gate_outputs[usize::from(quad.gate_index)] += quad_output;
             }
 
-            wires.push(gate_outputs.into_values().collect());
+            // Specification interpretation verification: check that gates which received input from
+            // Z quads output zero. This has to be true since (1) all Z quads output zero and (2) we
+            // expect that Q and Z are disjoint. We verify the latter in
+            // roundtrip_circuit_test_vector.
+            for gate_index in z_gate_indexes {
+                assert!(bool::from(gate_outputs[gate_index].is_zero()));
+            }
+
+            wires.push(gate_outputs);
         }
 
         // Reverse wires so that the inputs come last and the outputs come first.
@@ -297,12 +336,12 @@ impl Codec for CircuitLayer {
 /// [3]: https://github.com/google/longfellow-zk/blob/87474f308020535e57a778a82394a14106f8be5b/lib/sumcheck/quad.h
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
 pub struct Quad {
-    /// The position of ths gate in its layer.
-    pub(crate) gate_number: Size,
+    /// The position of ths gate in its layer, corresponding to `gate_number` in the specification.
+    pub(crate) gate_index: Size,
     /// Index of the left-hand wire feeding into this gate.
-    pub(crate) left_wire: Size,
+    pub(crate) left_wire_index: Size,
     /// Index of the right-hand wire feeding into this gate.
-    pub(crate) right_wire: Size,
+    pub(crate) right_wire_index: Size,
     /// Index into the circuit's constant table. The value at that index is the quad's value. If the
     /// value is 0, the quad is part of Z. If the value is nonzero, the quad is part of Q. See [1]
     /// for discussion of the combined quad.
@@ -318,10 +357,11 @@ impl Quad {
     fn encode(&self, prev_quad: Option<Quad>, bytes: &mut Vec<u8>) -> Result<(), anyhow::Error> {
         let prev_quad = prev_quad.unwrap_or_default();
 
-        self.gate_number
-            .encode_delta(prev_quad.gate_number, bytes)?;
-        self.left_wire.encode_delta(prev_quad.left_wire, bytes)?;
-        self.right_wire.encode_delta(prev_quad.right_wire, bytes)?;
+        self.gate_index.encode_delta(prev_quad.gate_index, bytes)?;
+        self.left_wire_index
+            .encode_delta(prev_quad.left_wire_index, bytes)?;
+        self.right_wire_index
+            .encode_delta(prev_quad.right_wire_index, bytes)?;
         self.const_table_index.encode(bytes)?;
 
         Ok(())
@@ -331,15 +371,15 @@ impl Quad {
     fn decode(prev_quad: Option<Quad>, bytes: &mut Cursor<&[u8]>) -> Result<Self, anyhow::Error> {
         let prev_quad = prev_quad.unwrap_or_default();
 
-        let gate_number = Size::decode_delta(prev_quad.gate_number, bytes)?;
-        let left_wire = Size::decode_delta(prev_quad.left_wire, bytes)?;
-        let right_wire = Size::decode_delta(prev_quad.right_wire, bytes)?;
+        let gate_index = Size::decode_delta(prev_quad.gate_index, bytes)?;
+        let left_wire_index = Size::decode_delta(prev_quad.left_wire_index, bytes)?;
+        let right_wire_index = Size::decode_delta(prev_quad.right_wire_index, bytes)?;
         let const_table_index = Size::decode(bytes)?;
 
         Ok(Self {
-            gate_number,
-            left_wire,
-            right_wire,
+            gate_index,
+            left_wire_index,
+            right_wire_index,
             const_table_index,
         })
     }
@@ -350,11 +390,12 @@ pub(crate) mod tests {
     use crate::{
         Codec, Size,
         circuit::{Circuit, Evaluation, Quad},
-        fields::{FieldId, fieldp128::FieldP128, fieldp256::FieldP256},
+        fields::{FieldElement, FieldId, fieldp128::FieldP128, fieldp256::FieldP256},
     };
     use ff::Field;
     use serde::Deserialize;
     use std::{
+        collections::HashSet,
         fs::File,
         io::{BufReader, Cursor, Read},
     };
@@ -362,16 +403,16 @@ pub(crate) mod tests {
     #[test]
     fn roundtrip_quad() {
         let quad = Quad {
-            gate_number: Size(1),
-            left_wire: Size(2),
-            right_wire: Size(3),
+            gate_index: Size(1),
+            left_wire_index: Size(2),
+            right_wire_index: Size(3),
             const_table_index: Size(4),
         };
 
         let next_quad = Quad {
-            gate_number: Size(5),
-            left_wire: Size(6),
-            right_wire: Size(7),
+            gate_index: Size(5),
+            left_wire_index: Size(6),
+            right_wire_index: Size(7),
             const_table_index: Size(8),
         };
 
@@ -433,37 +474,59 @@ pub(crate) mod tests {
         }
     }
 
-    fn roundtrip_circuit_test_vector(name: &'static str) {
+    fn roundtrip_circuit_test_vector<FE: FieldElement>(name: &'static str) {
         let (test_vector, circuit) = CircuitTestVector::decode(name);
 
+        // Verifies that circuits conform to a few invariants that we have interpreted from the
+        // specification. Panics if any invariant does not hold for this circuit.
+        //
+        // It would be nice to do this in `Circuit::decode`, but we need to know which field
+        // element is in use.
         assert_eq!(FieldId::try_from(test_vector.field).unwrap(), circuit.field);
         assert_eq!(Size::from(test_vector.depth - 1), circuit.num_layers);
         assert_eq!(test_vector.depth as usize - 1, circuit.layers.len());
 
         let mut quads_count = 0;
-        for layer in &circuit.layers {
-            for quad in &layer.quads {
-                assert!(quad.left_wire < layer.num_wires);
-                assert!(quad.right_wire < layer.num_wires);
+        for (layer_index, layer) in circuit.layers.iter().enumerate() {
+            let mut q_quad_gates = HashSet::new();
+            let mut z_quad_gates = HashSet::new();
+
+            for (quad_index, quad) in layer.quads.iter().enumerate() {
+                assert!(quad.left_wire_index < layer.num_wires);
+                assert!(quad.right_wire_index < layer.num_wires);
                 assert!(quad.const_table_index < circuit.constant_table.len());
 
-                // Force parsing of the constants
-                match circuit.field {
-                    FieldId::None => panic!("circuit can't have Field::None"),
-                    FieldId::P256 => {
-                        circuit
-                            .constant::<FieldP256>(quad.const_table_index)
-                            .unwrap();
-                    }
-                    FieldId::FP128 => {
-                        circuit
-                            .constant::<FieldP128>(quad.const_table_index)
-                            .unwrap();
-                    }
+                let next_layer_num_wires = if layer_index == 0 {
+                    circuit.num_outputs
+                } else {
+                    // The Longfellow convention is that layer 0 is outputs and layer num_layers is
+                    // inputs, so the next layer of the circuit is -1.
+                    // https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-01#section-6.3.1
+                    circuit.layers[layer_index - 1].num_wires
+                };
+                if quad.gate_index >= next_layer_num_wires {
+                    panic!(
+                        "quad {quad_index} on layer {layer_index} has gate number {} exceeding the \
+                        number of input wires on the next layer",
+                        quad.gate_index
+                    );
                 }
 
-                assert!(quad.gate_number < layer.quads.len());
+                // Force parsing of the constants
+                let quad_value = circuit.constant::<FE>(quad.const_table_index).unwrap();
+                if quad_value.is_zero().into() {
+                    z_quad_gates.insert(quad.gate_index);
+                } else {
+                    q_quad_gates.insert(quad.gate_index);
+                }
+
+                assert!(quad.gate_index < layer.quads.len());
             }
+
+            // Our interpretation of the specification is that gates should get contributions from
+            // either Q or Z but never both.
+            let intersection: Vec<_> = q_quad_gates.intersection(&z_quad_gates).collect();
+            assert!(intersection.is_empty(), "Q and Z quads intersect");
 
             quads_count += layer.quads.len();
         }
@@ -475,12 +538,14 @@ pub(crate) mod tests {
 
     #[test]
     fn roundtrip_circuit_longfellow_rfc_1() {
-        roundtrip_circuit_test_vector("longfellow-rfc-1-87474f308020535e57a778a82394a14106f8be5b");
+        roundtrip_circuit_test_vector::<FieldP128>(
+            "longfellow-rfc-1-87474f308020535e57a778a82394a14106f8be5b",
+        );
     }
 
     #[test]
     fn roundtrip_circuit_test_vector_mac() {
-        roundtrip_circuit_test_vector(
+        roundtrip_circuit_test_vector::<FieldP256>(
             "longfellow-mac-circuit-902a955fbb22323123aac5b69bdf3442e6ea6f80-1",
         );
     }
