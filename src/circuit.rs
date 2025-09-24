@@ -210,17 +210,13 @@ impl Circuit {
                         )
                     })?;
 
-                // Specification interpretation verification: if this quad is part of Z, then its
-                // input wires should be coming from a Z gate, and should always be zero.
-                if quad_value.is_zero().into() {
+                let quad_output = if quad_value.is_zero().into() {
                     z_gate_indexes.insert(usize::from(quad.gate_index));
 
-                    if !bool::from((*left_wire * right_wire).is_zero()) {
-                        panic!("product of input wires to a Z quad should be zero");
-                    }
-                }
-
-                let quad_output = quad_value * left_wire * right_wire;
+                    *left_wire * right_wire
+                } else {
+                    quad_value * left_wire * right_wire
+                };
 
                 // Specification interpretation verification: this should never happen. We check
                 // this condition in roundtrip_circuit_test_vector, but not in deserialization.
