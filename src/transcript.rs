@@ -3,7 +3,7 @@
 //!
 //! https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-00#section-3
 
-use crate::fields::FieldElement;
+use crate::{Codec, fields::FieldElement};
 use aes::{
     Aes256,
     cipher::{BlockEncrypt, KeyInit},
@@ -53,7 +53,7 @@ impl Transcript {
         self.write_bytes(&[0x1])?;
 
         // Write field element
-        self.write_bytes(field_element.to_repr().as_ref())?;
+        self.write_bytes(field_element.get_encoded()?.as_ref())?;
 
         Ok(())
     }
@@ -77,7 +77,7 @@ impl Transcript {
 
         // Write array
         for field_element in field_elements {
-            self.write_bytes(field_element.to_repr().as_ref())?;
+            self.write_bytes(field_element.get_encoded()?.as_ref())?;
         }
 
         Ok(())

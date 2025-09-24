@@ -6,7 +6,24 @@ use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use ff::PrimeField;
 use std::io::Cursor;
 
-pub trait FieldElement: PrimeField + for<'a> TryFrom<&'a [u8], Error = anyhow::Error> {}
+pub trait FieldElement: PrimeField + for<'a> TryFrom<&'a [u8], Error = anyhow::Error> {
+    /// Number of bytes needed to represent a field element.
+    fn num_bytes() -> usize {
+        (Self::NUM_BITS as usize).div_ceil(8)
+    }
+}
+
+impl<FE: FieldElement> Codec for FE {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, anyhow::Error> {
+        Self::try_from(&u8::decode_fixed_array(bytes, Self::num_bytes())?)
+    }
+
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), anyhow::Error> {
+        // Get the repr, which will be extra long to fit the limbs, then truncate down to the
+        // encoded length.
+        u8::encode_fixed_array(&self.to_repr().as_ref()[..Self::num_bytes()], bytes)
+    }
+}
 
 /// Field identifier. According to the draft specification, the encoding is of variable length ([1])
 /// but in the Longfellow implementation ([2]), they're always 3 bytes long.
@@ -230,10 +247,15 @@ pub mod fieldp521 {
 
 #[cfg(test)]
 mod tests {
-    use crate::fields::{
-        FieldId, SerializedFieldElement, fieldp128::FieldP128, fieldp256::FieldP256,
+    use ff::PrimeField;
+
+    use crate::{
+        Codec,
+        fields::{FieldId, SerializedFieldElement, fieldp128::FieldP128, fieldp256::FieldP256},
     };
     use std::io::Cursor;
+
+    use super::fieldp521::FieldP521;
 
     #[test]
     fn codec_roundtrip_field_p128() {
@@ -362,5 +384,20 @@ mod tests {
         ] {
             FieldP256::try_from(invalid_element).expect_err(label);
         }
+    }
+
+    #[test]
+    fn field_p256_roundtrip() {
+        FieldP256::from_u128(111).roundtrip();
+    }
+
+    #[test]
+    fn field_p128_roundtrip() {
+        FieldP128::from_u128(111).roundtrip();
+    }
+
+    #[test]
+    fn field_p521_roundtrip() {
+        FieldP521::from_u128(111).roundtrip();
     }
 }
