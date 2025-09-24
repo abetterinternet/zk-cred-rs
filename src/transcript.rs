@@ -11,12 +11,10 @@ use aes::{
 use anyhow::{Context, anyhow};
 use crypto_common::{BlockSizeUser, generic_array::GenericArray};
 use sha2::{Digest, Sha256};
-use std::marker::PhantomData;
 
 /// A transcript of the prover's execution of a protocol, used to generate the verifier's public
 /// coin challenges based on the state of the transcript at some moment.
-pub struct Transcript<F> {
-    phantom: PhantomData<F>,
+pub struct Transcript {
     /// Accumulated hash of messages written to the transcript, used as the seed to
     /// [`FiatShamirPseudoRandomFunction`] to generate verifier challenges.
     fsprf_seed: Sha256,
@@ -24,7 +22,7 @@ pub struct Transcript<F> {
     current_fsprf: Option<FiatShamirPseudoRandomFunction>,
 }
 
-impl<FE: FieldElement> Transcript<FE> {
+impl Transcript {
     /// Initialize a transcript.
     ///
     /// The specification is not clear about what `session_id` is, but in the C++ implementation,
@@ -34,7 +32,6 @@ impl<FE: FieldElement> Transcript<FE> {
     /// [1]: https://github.com/google/longfellow-zk/blob/87474f308020535e57a778a82394a14106f8be5b/lib/random/transcript.h#L76
     pub fn initialize(session_id: &[u8]) -> Result<Self, anyhow::Error> {
         let mut transcript = Self {
-            phantom: PhantomData,
             fsprf_seed: Sha256::new(),
             current_fsprf: None,
         };
@@ -48,7 +45,10 @@ impl<FE: FieldElement> Transcript<FE> {
     /// Write a field element to the transcript.
     ///
     /// https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-00#section-3.1.2
-    pub fn write_field_element(&mut self, field_element: &FE) -> Result<(), anyhow::Error> {
+    pub fn write_field_element<FE: FieldElement>(
+        &mut self,
+        field_element: &FE,
+    ) -> Result<(), anyhow::Error> {
         // Write tag for a single field element
         self.write_bytes(&[0x1])?;
 
@@ -58,13 +58,14 @@ impl<FE: FieldElement> Transcript<FE> {
         Ok(())
     }
 
-    pub fn write_field_element_array(
+    pub fn write_field_element_array<FE: FieldElement>(
         &mut self,
         field_elements: &[FE],
     ) -> Result<(), anyhow::Error> {
         // Length prefix is 8 bytes, so reject slices that are too big
-        // TODO: casting u64 to usize won't work on LP32
-        if field_elements.len() > u64::MAX as usize {
+        if field_elements.len()
+            > usize::try_from(u64::MAX).context("can't fit u64::MAX in a usize")?
+        {
             return Err(anyhow!("field element array too big for transcript"));
         }
 
@@ -119,7 +120,10 @@ impl<FE: FieldElement> Transcript<FE> {
     }
 
     /// Generate a challenge, consisting of `length` field elements.
-    pub fn generate_challenge(&mut self, length: usize) -> Result<Vec<FE>, anyhow::Error> {
+    pub fn generate_challenge<FE: FieldElement>(
+        &mut self,
+        length: usize,
+    ) -> Result<Vec<FE>, anyhow::Error> {
         let fsprf = self.current_fsprf.get_or_insert_with(|| {
             // Clone the SHA256 state so we can finalize it
             let fsprf_seed = self.fsprf_seed.clone().finalize();
@@ -130,19 +134,9 @@ impl<FE: FieldElement> Transcript<FE> {
 
         // TODO: the case where the "field element" is a polynomial?
 
-        Ok(std::iter::from_fn(|| {
-            // Generate a field element by rejection sampling
-            // TODO: FE::try_from could fail for reasons besides the generated value being too big
-            loop {
-                if let Ok(fe) =
-                    FE::try_from(&fsprf.take(FE::NUM_BITS as usize / 8).collect::<Vec<_>>())
-                {
-                    break Some(fe);
-                }
-            }
-        })
-        .take(length)
-        .collect())
+        Ok(std::iter::from_fn(|| Some(fsprf.sample_field_element()))
+            .take(length)
+            .collect())
     }
 }
 
@@ -185,20 +179,52 @@ impl FiatShamirPseudoRandomFunction {
 
         block.to_vec()
     }
+
+    pub fn sample_field_element<FE: FieldElement>(&mut self) -> FE {
+        self.sample_field_element_counting_rejections().0
+    }
+
+    /// Generate a field element by rejection sampling and return how many rejections were observed.
+    pub fn sample_field_element_counting_rejections<FE: FieldElement>(&mut self) -> (FE, usize) {
+        let mut rejections = 0;
+        let field_element = loop {
+            // Some fields like P521 have a bit count that isn't congruent to 8. We sample
+            // enough excess bits to get whole bytes and then mask off the excess, which can be
+            // at most 7 bits.
+            // https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-01#section-3.3
+            let num_sampled_bytes = (FE::NUM_BITS as usize).div_ceil(8);
+            let mut sampled_bytes = self.take(num_sampled_bytes).collect::<Vec<_>>();
+            let excess_bits = num_sampled_bytes * 8 - FE::NUM_BITS as usize;
+            if excess_bits != 0 {
+                sampled_bytes[num_sampled_bytes - 1] &= (1 << (8 - excess_bits)) - 1;
+            }
+            // FE::try_from rejects if the value is still too big after masking.
+            // TODO: FE::try_from could fail for reasons besides the generated value being too big
+            if let Ok(fe) = FE::try_from(&sampled_bytes) {
+                break fe;
+            }
+            rejections += 1;
+        };
+
+        (field_element, rejections)
+    }
 }
 
 impl Iterator for FiatShamirPseudoRandomFunction {
     type Item = u8;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.position += 1;
         let position_in_block = self.position % Aes256::block_size();
         if position_in_block == 0 {
             // Exhausted current block, compute the next
             self.current_block = Self::current_block(&self.cipher, self.position);
         }
 
-        Some(self.current_block[position_in_block])
+        let value = self.current_block[position_in_block];
+
+        self.position += 1;
+
+        Some(value)
     }
 }
 
@@ -207,7 +233,7 @@ mod tests {
     use ff::PrimeField;
 
     use super::*;
-    use crate::fields::fieldp256::FieldP256;
+    use crate::fields::{fieldp256::FieldP256, fieldp521::FieldP521};
 
     #[test]
     fn deterministic() {
@@ -240,13 +266,13 @@ mod tests {
 
     #[test]
     fn distinct_session_id() {
-        let mut transcript1 = Transcript::<FieldP256>::initialize(b"test1").unwrap();
+        let mut transcript1 = Transcript::initialize(b"test1").unwrap();
         transcript1.write_byte_array(b"some bytes").unwrap();
-        let challenge1 = transcript1.generate_challenge(10).unwrap();
+        let challenge1 = transcript1.generate_challenge::<FieldP256>(10).unwrap();
 
-        let mut transcript2 = Transcript::<FieldP256>::initialize(b"test2").unwrap();
+        let mut transcript2 = Transcript::initialize(b"test2").unwrap();
         transcript2.write_byte_array(b"some bytes").unwrap();
-        let challenge2 = transcript2.generate_challenge(10).unwrap();
+        let challenge2 = transcript2.generate_challenge::<FieldP256>(10).unwrap();
 
         assert_ne!(
             challenge1, challenge2,
@@ -256,13 +282,13 @@ mod tests {
 
     #[test]
     fn distinct_messages() {
-        let mut transcript1 = Transcript::<FieldP256>::initialize(b"test").unwrap();
+        let mut transcript1 = Transcript::initialize(b"test").unwrap();
         transcript1.write_byte_array(b"some bytes").unwrap();
-        let challenge1 = transcript1.generate_challenge(10).unwrap();
+        let challenge1 = transcript1.generate_challenge::<FieldP256>(10).unwrap();
 
-        let mut transcript2 = Transcript::<FieldP256>::initialize(b"test").unwrap();
+        let mut transcript2 = Transcript::initialize(b"test").unwrap();
         transcript2.write_byte_array(b"some other bytes").unwrap();
-        let challenge2 = transcript2.generate_challenge(10).unwrap();
+        let challenge2 = transcript2.generate_challenge::<FieldP256>(10).unwrap();
 
         assert_ne!(
             challenge1, challenge2,
@@ -272,15 +298,37 @@ mod tests {
 
     #[test]
     fn writing_messages_changes_challenge() {
-        let mut transcript = Transcript::<FieldP256>::initialize(b"test").unwrap();
+        let mut transcript = Transcript::initialize(b"test").unwrap();
         transcript.write_byte_array(b"some bytes").unwrap();
-        let challenge1 = transcript.generate_challenge(10).unwrap();
+        let challenge1 = transcript.generate_challenge::<FieldP256>(10).unwrap();
         transcript.write_byte_array(b"some more bytes").unwrap();
-        let challenge2 = transcript.generate_challenge(10).unwrap();
+        let challenge2 = transcript.generate_challenge::<FieldP256>(10).unwrap();
 
         assert_ne!(
             challenge1, challenge2,
             "generated challenge should differ after writing new bytes"
         );
+    }
+
+    #[test]
+    fn sample_field_without_excess_bits() {
+        let mut fsprf = FiatShamirPseudoRandomFunction::new(&[0; 32]).unwrap();
+        // Crude test that checks the rejection rate is below 50%.
+        let count = 100;
+        for _ in 0..count {
+            let (_, rejections) = fsprf.sample_field_element_counting_rejections::<FieldP256>();
+            assert!(rejections as f64 / (rejections as f64 + count as f64) < 0.5);
+        }
+    }
+
+    #[test]
+    fn sample_field_with_excess_bits_without_rejections() {
+        // FieldP521 has excess bits, but every 521 bit integer is a valid field element, so if
+        // excess bit masking is correctly implemented, we expect 0 rejections.
+        let mut fsprf = FiatShamirPseudoRandomFunction::new(&[0; 32]).unwrap();
+        for _ in 0..100 {
+            let (_, rejections) = fsprf.sample_field_element_counting_rejections::<FieldP521>();
+            assert_eq!(rejections, 0);
+        }
     }
 }

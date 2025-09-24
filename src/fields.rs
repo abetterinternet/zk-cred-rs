@@ -185,6 +185,49 @@ pub mod fieldp128 {
     }
 }
 
+pub mod fieldp521 {
+    use super::*;
+
+    /// FieldP521 is teh field with modulus 2^521 - 1, described in [Section 7.2 of
+    /// draft-google-cfrg-libzk-00][1].
+    /// The generator was computed in [SageMath][4] (thanks to the hint in
+    /// [`PrimeField::MULTIPLICATIVE_GENERATOR`]).
+    ///
+    /// The endianness is per [Section 7.2.1 of draft-google-cfrg-libzk-00][2].
+    ///
+    /// [1]: https://www.ietf.org/id/draft-google-cfrg-libzk-00.html#section-7.2
+    /// [2]: https://www.ietf.org/id/draft-google-cfrg-libzk-00.html#section-7.2.1
+    /// [4]: https://sagecell.sagemath.org/?z=eJxzd9MwijM0stAFkgYW2oaaegVFmbmZJZllqfGpOam5qXklGpoAwO8LXQ==&lang=sage&interacts=eJyLjgUAARUAuQ==
+    #[derive(ff::PrimeField)]
+    #[PrimeFieldModulus = "6864797660130609714981900799081393217269435300143305409394463459185543183397656052122559640661454554977296311391480858037121987999716643812574028291115057151"]
+    #[PrimeFieldGenerator = "3"]
+    #[PrimeFieldReprEndianness = "little"]
+    pub struct FieldP521([u64; 9]);
+
+    impl FieldElement for FieldP521 {}
+
+    impl TryFrom<&[u8]> for FieldP521 {
+        type Error = anyhow::Error;
+
+        fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+            // Empirically, FieldP521Repr is 72 bytes
+            const REPR_LEN: usize = 72;
+
+            if value.len() > REPR_LEN {
+                return Err(anyhow!("slice is too long for field representation"));
+            }
+
+            let mut padded = [0u8; REPR_LEN];
+            padded[..value.len()].copy_from_slice(value);
+
+            Self::from_repr(FieldP521Repr(padded))
+                // TODO: this is not constant time
+                .into_option()
+                .ok_or_else(|| anyhow!("cannot construct field element from value"))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::fields::{
