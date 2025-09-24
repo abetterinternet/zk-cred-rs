@@ -6,7 +6,24 @@ use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use ff::PrimeField;
 use std::io::Cursor;
 
-pub trait FieldElement: PrimeField + for<'a> TryFrom<&'a [u8], Error = anyhow::Error> {}
+pub trait FieldElement: PrimeField + for<'a> TryFrom<&'a [u8], Error = anyhow::Error> {
+    /// Number of bytes needed to represent a field element.
+    fn num_bytes() -> usize {
+        (Self::NUM_BITS as usize).div_ceil(8)
+    }
+}
+
+impl<FE: FieldElement> Codec for FE {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, anyhow::Error> {
+        Self::try_from(&u8::decode_fixed_array(bytes, Self::num_bytes())?)
+    }
+
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), anyhow::Error> {
+        // Get the repr, which will be extra long to fit the limbs, then truncate down to the
+        // encoded length.
+        u8::encode_fixed_array(&self.to_repr().as_ref()[..Self::num_bytes()], bytes)
+    }
+}
 
 /// Field identifier. According to the draft specification, the encoding is of variable length ([1])
 /// but in the Longfellow implementation ([2]), they're always 3 bytes long.
@@ -185,12 +202,60 @@ pub mod fieldp128 {
     }
 }
 
+pub mod fieldp521 {
+    use super::*;
+
+    /// FieldP521 is the field with modulus 2^521 - 1, described in [Section 7.2 of
+    /// draft-google-cfrg-libzk-00][1].
+    /// The generator was computed in [SageMath][4] (thanks to the hint in
+    /// [`PrimeField::MULTIPLICATIVE_GENERATOR`]).
+    ///
+    /// The endianness is per [Section 7.2.1 of draft-google-cfrg-libzk-00][2].
+    ///
+    /// [1]: https://www.ietf.org/id/draft-google-cfrg-libzk-00.html#section-7.2
+    /// [2]: https://www.ietf.org/id/draft-google-cfrg-libzk-00.html#section-7.2.1
+    /// [4]: https://sagecell.sagemath.org/?z=eJxzd9MwijM1MtQ11NQrKMrMzSzJLEuNT81JzU3NK9HQBACSMgoG&lang=sage&interacts=eJyLjgUAARUAuQ==
+    #[derive(ff::PrimeField)]
+    #[PrimeFieldModulus = "6864797660130609714981900799081393217269435300143305409394463459185543183397656052122559640661454554977296311391480858037121987999716643812574028291115057151"]
+    #[PrimeFieldGenerator = "3"]
+    #[PrimeFieldReprEndianness = "little"]
+    pub struct FieldP521([u64; 9]);
+
+    impl FieldElement for FieldP521 {}
+
+    impl TryFrom<&[u8]> for FieldP521 {
+        type Error = anyhow::Error;
+
+        fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+            // Empirically, FieldP521Repr is 72 bytes
+            const REPR_LEN: usize = 72;
+
+            if value.len() > REPR_LEN {
+                return Err(anyhow!("slice is too long for field representation"));
+            }
+
+            let mut padded = [0u8; REPR_LEN];
+            padded[..value.len()].copy_from_slice(value);
+
+            Self::from_repr(FieldP521Repr(padded))
+                // TODO: this is not constant time
+                .into_option()
+                .ok_or_else(|| anyhow!("cannot construct field element from value"))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::fields::{
-        FieldId, SerializedFieldElement, fieldp128::FieldP128, fieldp256::FieldP256,
+    use ff::PrimeField;
+
+    use crate::{
+        Codec,
+        fields::{FieldId, SerializedFieldElement, fieldp128::FieldP128, fieldp256::FieldP256},
     };
     use std::io::Cursor;
+
+    use super::fieldp521::FieldP521;
 
     #[test]
     fn codec_roundtrip_field_p128() {
@@ -319,5 +384,20 @@ mod tests {
         ] {
             FieldP256::try_from(invalid_element).expect_err(label);
         }
+    }
+
+    #[test]
+    fn field_p256_roundtrip() {
+        FieldP256::from_u128(111).roundtrip();
+    }
+
+    #[test]
+    fn field_p128_roundtrip() {
+        FieldP128::from_u128(111).roundtrip();
+    }
+
+    #[test]
+    fn field_p521_roundtrip() {
+        FieldP521::from_u128(111).roundtrip();
     }
 }

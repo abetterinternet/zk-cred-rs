@@ -4,10 +4,7 @@ use std::{fmt::Display, io::Cursor};
 
 pub mod circuit;
 pub mod fields;
-
-pub enum Error {
-    BadKeyLength,
-}
+pub mod transcript;
 
 /// A serialized size, which is in the range [1, 2^24 -1] per [draft-google-cfrg-libzk-00 section
 /// 7][1]. Serialized in little endian order, occupying 3 bytes.
@@ -144,6 +141,13 @@ pub trait Codec: Sized + PartialEq + Eq + std::fmt::Debug {
         Ok(items)
     }
 
+    /// Get the encoded form of this object, allocating a vector to hold it.
+    fn get_encoded(&self) -> Result<Vec<u8>, anyhow::Error> {
+        let mut encoded = Vec::new();
+        self.encode(&mut encoded)?;
+        Ok(encoded)
+    }
+
     /// Append the encoded form of this object to the end of `bytes`, growing the vector as needed.
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), anyhow::Error>;
 
@@ -171,8 +175,8 @@ pub trait Codec: Sized + PartialEq + Eq + std::fmt::Debug {
 
     #[cfg(test)]
     fn roundtrip(&self) {
-        let mut encoded = Vec::new();
-        self.encode(&mut encoded).unwrap();
+        let encoded = self.get_encoded().unwrap();
+        println!("encoded: {encoded:0x?}");
 
         let decoded = Self::decode(&mut Cursor::new(&encoded)).unwrap();
 

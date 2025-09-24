@@ -535,9 +535,10 @@ pub(crate) mod tests {
             quads_count += layer.quads.len();
         }
         assert_eq!(test_vector.quads as usize, quads_count);
-        let mut encoded_again = Vec::new();
-        circuit.encode(&mut encoded_again).unwrap();
-        assert_eq!(encoded_again, test_vector.serialized_circuit);
+        assert_eq!(
+            circuit.get_encoded().unwrap(),
+            test_vector.serialized_circuit
+        );
     }
 
     #[test]
