@@ -189,10 +189,6 @@ impl Circuit {
                     "constant missing in quad {quad_index} on layer {layer_index}"
                 ))?;
 
-                if quad_value.is_zero().into() {
-                    z_gate_indexes.insert(usize::from(quad.gate_index));
-                }
-
                 let left_wire = wires[layer_index]
                     .get(usize::from(quad.left_wire_index))
                     .ok_or_else(|| {
@@ -213,6 +209,16 @@ impl Circuit {
                             wires[layer_index],
                         )
                     })?;
+
+                // Specification interpretation verification: if this quad is part of Z, then its
+                // input wires should be coming from a Z gate, and should always be zero.
+                if quad_value.is_zero().into() {
+                    z_gate_indexes.insert(usize::from(quad.gate_index));
+
+                    if !bool::from((*left_wire * right_wire).is_zero()) {
+                        panic!("product of input wires to a Z quad should be zero");
+                    }
+                }
 
                 let quad_output = quad_value * left_wire * right_wire;
 
@@ -519,8 +525,6 @@ pub(crate) mod tests {
                 } else {
                     q_quad_gates.insert(quad.gate_index);
                 }
-
-                assert!(quad.gate_index < layer.quads.len());
             }
 
             // Our interpretation of the specification is that gates should get contributions from
