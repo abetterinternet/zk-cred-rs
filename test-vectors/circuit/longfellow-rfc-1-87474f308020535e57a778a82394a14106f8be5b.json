@@ -1,0 +1,7 @@
+{
+    "description": "Circuit C(n, m, s) = 0 if and only if n is the m-th s-gonal number in F_p128. This circuit verifies that 2n = (s-2)m^2 - (s - 4)*m.",
+    "field": 6,
+    "depth": 3,
+    "quads": 11,
+    "_terms": 11
+}
