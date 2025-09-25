@@ -216,7 +216,7 @@ impl Circuit {
                     z_gate_indexes.insert(usize::from(quad.gate_index));
 
                     if !bool::from((*left_wire * right_wire).is_zero()) {
-                        panic!("product of input wires to a Z quad should be zero");
+                        return Err(anyhow!("product of input wires to a Z quad should be zero"));
                     }
                 }
 
