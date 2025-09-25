@@ -210,17 +210,13 @@ impl Circuit {
                         )
                     })?;
 
-                // Specification interpretation verification: if this quad is part of Z, then its
-                // input wires should be coming from a Z gate, and should always be zero.
-                if quad_value.is_zero().into() {
+                let quad_output = if quad_value.is_zero().into() {
                     z_gate_indexes.insert(usize::from(quad.gate_index));
 
-                    if !bool::from((*left_wire * right_wire).is_zero()) {
-                        panic!("product of input wires to a Z quad should be zero");
-                    }
-                }
-
-                let quad_output = quad_value * left_wire * right_wire;
+                    *left_wire * right_wire
+                } else {
+                    quad_value * left_wire * right_wire
+                };
 
                 // Specification interpretation verification: this should never happen. We check
                 // this condition in roundtrip_circuit_test_vector, but not in deserialization.
@@ -239,7 +235,11 @@ impl Circuit {
             // expect that Q and Z are disjoint. We verify the latter in
             // roundtrip_circuit_test_vector.
             for gate_index in z_gate_indexes {
-                assert!(bool::from(gate_outputs[gate_index].is_zero()));
+                if !bool::from(gate_outputs[gate_index].is_zero()) {
+                    return Err(anyhow!(
+                        "in-circuit assertion failed at layer {layer_index}, gate {gate_index}"
+                    ));
+                }
             }
 
             wires.push(gate_outputs);
@@ -395,8 +395,11 @@ impl Quad {
 pub(crate) mod tests {
     use crate::{
         Codec, Size,
-        circuit::{Circuit, Evaluation, Quad},
-        fields::{FieldElement, FieldId, fieldp128::FieldP128, fieldp256::FieldP256},
+        circuit::{Circuit, CircuitLayer, Evaluation, Quad},
+        fields::{
+            FieldElement, FieldId, SerializedFieldElement, fieldp128::FieldP128,
+            fieldp256::FieldP256,
+        },
     };
     use ff::Field;
     use serde::Deserialize;
@@ -591,5 +594,182 @@ pub(crate) mod tests {
                 .iter()
                 .any(|output: &FieldP128| *output != FieldP128::ZERO)
         );
+    }
+
+    /// This creates a simple circuit that exercises in-circuit assertions.
+    ///
+    /// It takes one input, x, checks that x - 2 = 0 with an in-circuit assertion, and outputs
+    /// (x - 1) * (x - 2). Following convention, the input wire V[3][0] is set to the constant value
+    /// of 1, and V[3][1] is set to the input x. The circuit executes the following equations.
+    ///
+    /// ```text
+    /// // Propagate 1 to next layer.
+    /// V[2][0] = 1 * V[3][0] * V[3][0]
+    /// // Calculate x^2 - 3x + 2.
+    /// V[2][1] = 1 * V[3][1] * V[3][1] + -3 * V[3][1] * V[3][0] + 2 * V[3][0] * V[3][0]
+    /// // Propagate x to next layer (for assertion).
+    /// V[2][2] = 1 * V[3][1] * V[3][0]
+    /// // Calculate -2 (for assertion).
+    /// V[2][3] = -2 * V[3][0] * V[3][0]
+    ///
+    /// // Propagate 1 to next layer.
+    /// V[1][0] = 1 * V[2][0] * V[2][0]
+    /// // Propagate x^2 - 3x + 2 to next layer.
+    /// V[1][1] = 1 * V[2][1] * V[2][0]
+    /// // Assert x - 2 = 0. (occupying gate #2 on this layer)
+    /// 0 = V[2][2] * V[2][0] + V[2][3] * V[2][0]
+    ///
+    /// // Propagate x^2 - 3x + 2 to output.
+    /// V[0][0] = 1 * V[1][1] * V[1][0]
+    /// ```
+    fn make_assertion_test_circuit() -> Circuit {
+        let constants = [
+            FieldP128::ZERO,
+            FieldP128::ONE,
+            FieldP128::from(2),
+            -FieldP128::from(2), // constant table index 3
+            -FieldP128::from(3), // constant table index 4
+        ];
+        let constant_table = constants
+            .into_iter()
+            .map(|constant| SerializedFieldElement(constant.get_encoded().unwrap()))
+            .collect();
+        let layers = vec![
+            CircuitLayer {
+                logw: Size(2),
+                num_wires: Size(3),
+                quads: vec![Quad {
+                    // Propagate x^2 - 3x + 2 to output.
+                    // V[0][0] = 1 * V[1][1] * V[1][0]
+                    gate_index: Size(0),
+                    left_wire_index: Size(1),
+                    right_wire_index: Size(0),
+                    const_table_index: Size(1),
+                }],
+            },
+            CircuitLayer {
+                logw: Size(2),
+                num_wires: Size(4),
+                quads: vec![
+                    // Propagate 1 to next layer.
+                    // V[1][0] = 1 * V[2][0] * V[2][0]
+                    Quad {
+                        gate_index: Size(0),
+                        left_wire_index: Size(0),
+                        right_wire_index: Size(0),
+                        const_table_index: Size(1),
+                    },
+                    // Propagate x^2 - 3x + 2 to next layer.
+                    // V[1][1] = 1 * V[2][1] * V[2][0]
+                    Quad {
+                        gate_index: Size(1),
+                        left_wire_index: Size(1),
+                        right_wire_index: Size(0),
+                        const_table_index: Size(1),
+                    },
+                    // Assert x - 2 = 0. (occupying gate #2 on this layer)
+                    // 0 = V[2][2] * V[2][0] + V[2][3] * V[2][0]
+                    Quad {
+                        gate_index: Size(2),
+                        left_wire_index: Size(2),
+                        right_wire_index: Size(0),
+                        const_table_index: Size(0),
+                    },
+                    Quad {
+                        gate_index: Size(2),
+                        left_wire_index: Size(3),
+                        right_wire_index: Size(0),
+                        const_table_index: Size(0),
+                    },
+                ],
+            },
+            CircuitLayer {
+                logw: Size(1),
+                num_wires: Size(2),
+                quads: vec![
+                    // Propagate 1 to next layer.
+                    // V[2][0] = 1 * V[3][0] * V[3][0]
+                    Quad {
+                        gate_index: Size(0),
+                        left_wire_index: Size(0),
+                        right_wire_index: Size(0),
+                        const_table_index: Size(1),
+                    },
+                    // Calculate x^2 - 3x + 2.
+                    // V[2][1] = 1 * V[3][1] * V[3][1] + -3 * V[3][1] * V[3][0] + 2 * V[3][0] * V[3][0]
+                    Quad {
+                        gate_index: Size(1),
+                        left_wire_index: Size(1),
+                        right_wire_index: Size(1),
+                        const_table_index: Size(1),
+                    },
+                    Quad {
+                        gate_index: Size(1),
+                        left_wire_index: Size(1),
+                        right_wire_index: Size(0),
+                        const_table_index: Size(4),
+                    },
+                    Quad {
+                        gate_index: Size(1),
+                        left_wire_index: Size(0),
+                        right_wire_index: Size(0),
+                        const_table_index: Size(2),
+                    },
+                    // Propagate x to next layer (for assertion).
+                    // V[2][2] = 1 * V[3][1] * V[3][0]
+                    Quad {
+                        gate_index: Size(2),
+                        left_wire_index: Size(1),
+                        right_wire_index: Size(0),
+                        const_table_index: Size(1),
+                    },
+                    // Calculate -2 (for assertion).
+                    // V[2][3] = -2 * V[3][0] * V[3][0]
+                    Quad {
+                        gate_index: Size(3),
+                        left_wire_index: Size(0),
+                        right_wire_index: Size(0),
+                        const_table_index: Size(3),
+                    },
+                ],
+            },
+        ];
+        Circuit {
+            version: 1,
+            field: FieldId::FP128,
+            num_outputs: Size(1),
+            num_copies: Size(0),
+            num_public_inputs: Size(1),
+            subfield_boundary: Size(1),
+            num_inputs: Size(1),
+            num_layers: Size(layers.len().try_into().unwrap()),
+            constant_table,
+            layers,
+            id: [0; 32],
+        }
+    }
+
+    #[test]
+    fn evaluate_assertion_pass_partial() {
+        // The input value of 1 should cause the in-circuit assertion to fail. The circuit output is still zero.
+        let circuit = make_assertion_test_circuit();
+        let error = circuit.evaluate::<FieldP128>(&[1]).unwrap_err();
+        assert!(error.to_string().contains("assertion failed"));
+    }
+
+    #[test]
+    fn evaluate_assertion_fail() {
+        // This input should cause both the in-circuit assertion to fail and the circuit output be non-zero.
+        let circuit = make_assertion_test_circuit();
+        let error = circuit.evaluate::<FieldP128>(&[5]).unwrap_err();
+        assert!(error.to_string().contains("assertion failed"));
+    }
+
+    #[test]
+    fn evaluate_assertion_pass_full() {
+        // The input value of 2 satisfies both the in-circuit assertion and the circuit output condition.
+        let circuit = make_assertion_test_circuit();
+        let evaluation = circuit.evaluate::<FieldP128>(&[2]).unwrap();
+        assert_eq!(evaluation.outputs()[0], FieldP128::ZERO);
     }
 }
