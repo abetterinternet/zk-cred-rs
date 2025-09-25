@@ -1,7 +1,7 @@
-# `zk-cred-rs`
+# `zk-cred-longfellow`
 
-A Rust implementation of the [Anonymous Credentials from ECDSA][anon-creds-ecdsa] scheme, following
-the [draft `libZK` specification][draft-google-cfrg-libzk].
+A Rust implementation of the [Anonymous Credentials from ECDSA][anon-creds-ecdsa] scheme, also known
+as Longfellow, following the [draft `libZK` specification][draft-google-cfrg-libzk].
 
 This project is part of [ISRG](https://abetterinternet.org)'s research into
 [digital identity][isrg-digital-identity].
