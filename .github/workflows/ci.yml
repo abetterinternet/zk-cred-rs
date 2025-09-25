@@ -12,6 +12,8 @@ jobs:
     steps:
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy, rustfmt
     - uses: actions/checkout@v5
     - name: Build
       run: cargo build
