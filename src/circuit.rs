@@ -1,6 +1,6 @@
 use crate::{
-    Codec, Size,
-    fields::{FieldElement, FieldId, SerializedFieldElement},
+    Byte, Codec, Size,
+    fields::{FieldId, SerializedFieldElement},
 };
 use anyhow::{Context, anyhow};
 use educe::Educe;
@@ -9,6 +9,7 @@ use std::{
     fmt::{self, Formatter},
     io::{Cursor, Read},
 };
+use zk_cred_longfellow_fields::FieldElement;
 
 /// A circuit, serialized according to the ad-hoc definition in [1] and [2].
 ///
@@ -18,7 +19,7 @@ use std::{
 #[educe(Debug)]
 pub struct Circuit {
     /// 1 byte version. Currently always 1.
-    pub(crate) version: u8,
+    pub(crate) version: Byte,
     /// The field this circuit uses. (not clear what subfield is used; hard coded to P256?)
     pub(crate) field: FieldId,
     /// Number of output wires (also `nv` in some places).
@@ -52,7 +53,7 @@ fn fmt_id(s: &[u8; 32], f: &mut Formatter<'_>) -> fmt::Result {
 
 impl Codec for Circuit {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, anyhow::Error> {
-        let version = u8::decode(bytes)?;
+        let version = Byte::decode(bytes)?;
         let field = FieldId::decode(bytes)?;
         let num_outputs = Size::decode(bytes)?;
         let num_copies = Size::decode(bytes)?;
@@ -394,12 +395,9 @@ impl Quad {
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::{
-        Codec, Size,
+        Byte, Codec, Size,
         circuit::{Circuit, CircuitLayer, Evaluation, Quad},
-        fields::{
-            FieldElement, FieldId, SerializedFieldElement, fieldp128::FieldP128,
-            fieldp256::FieldP256,
-        },
+        fields::{FieldId, SerializedFieldElement},
     };
     use ff::Field;
     use serde::Deserialize;
@@ -408,6 +406,7 @@ pub(crate) mod tests {
         fs::File,
         io::{BufReader, Cursor, Read},
     };
+    use zk_cred_longfellow_fields::{FieldElement, fieldp128::FieldP128, fieldp256::FieldP256};
 
     #[test]
     fn roundtrip_quad() {
@@ -735,7 +734,7 @@ pub(crate) mod tests {
             },
         ];
         Circuit {
-            version: 1,
+            version: Byte(1),
             field: FieldId::FP128,
             num_outputs: Size(1),
             num_copies: Size(0),
