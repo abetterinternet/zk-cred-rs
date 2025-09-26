@@ -249,6 +249,44 @@ impl Circuit {
         wires.reverse();
         Ok(Evaluation { wires })
     }
+
+    /// Compute the combined quad `QZ = Q + beta * Z` for the specified layer.
+    ///
+    /// Because Q and Z are disjoint, this amounts to traversing the layer's quads, identifying Z
+    /// quads (the ones whose value is zero) and setting their value to beta. This is then compiled
+    /// into a three-dimensional array indexed by gate index, left wire index, and right wire index.
+    pub fn combined_quad<FE: FieldElement>(
+        &self,
+        layer_index: usize,
+        beta: FE,
+    ) -> Result<Vec<Vec<Vec<FE>>>, anyhow::Error> {
+        // The number of gates on this layer is the number of input wires to the next layer
+        let num_gates = if layer_index == 0 {
+            self.num_outputs
+        } else {
+            self.layers[layer_index - 1].num_wires
+        };
+        let mut combined_quad = vec![
+            vec![
+                vec![FE::ZERO; self.layers[layer_index].num_wires.into()];
+                self.layers[layer_index].num_wires.into()
+            ];
+            num_gates.into()
+        ];
+
+        for quad in &self.layers[layer_index].quads {
+            let quad_value: FE = self.constant(quad.const_table_index)?;
+
+            combined_quad[usize::from(quad.gate_index)][usize::from(quad.left_wire_index)]
+                [usize::from(quad.right_wire_index)] = if quad_value.is_zero().into() {
+                beta
+            } else {
+                quad_value
+            };
+        }
+
+        Ok(combined_quad)
+    }
 }
 
 /// The evaluation of a circuit.
@@ -257,12 +295,18 @@ pub struct Evaluation<FieldElement> {
     /// The value of each of the wires of the circuit after evaluation. An n-layer circuit has n+1
     /// layers of wire values. Layer index 0 is the outputs and layer index n is the inputs. The
     /// length of each layer depends on the number of gates on each layer.
-    wires: Vec<Vec<FieldElement>>,
+    pub wires: Vec<Vec<FieldElement>>,
 }
 
 impl<FieldElement> Evaluation<FieldElement> {
+    /// Get the outputs of this evaluation.
     pub fn outputs(&self) -> &[FieldElement] {
         self.wires[0].as_slice()
+    }
+
+    /// Get the inputs for this evaluation.
+    pub fn inputs(&self) -> &[FieldElement] {
+        self.wires[self.wires.len() - 1].as_slice()
     }
 }
 
