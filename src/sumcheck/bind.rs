@@ -115,12 +115,21 @@ impl<FE: FieldElement> SumcheckArray<FE> for Vec<Vec<FE>> {
     }
 
     fn transpose(&self) -> Self {
-        let mut transposed = vec![vec![FE::ZERO; self.len()]; self[0].len()];
+        // find biggest row so we can allocate appropriately
+        let mut biggest = 0;
+        for row in self {
+            if row.len() > biggest {
+                biggest = row.len();
+            }
+        }
+
+        let mut transposed = vec![vec![FE::ZERO; self.len()]; biggest];
 
         for i in 0..self.len() {
             #[allow(clippy::needless_range_loop)]
             for j in 0..self[i].len() {
-                transposed[j][i] = self.element([i, j])
+                let element = self.element([i, j]);
+                transposed[j][i] = element;
             }
         }
 
