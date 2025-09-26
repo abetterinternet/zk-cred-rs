@@ -401,7 +401,6 @@ pub(crate) mod tests {
             fieldp256::FieldP256,
         },
     };
-    use ff::Field;
     use serde::Deserialize;
     use std::{
         collections::HashSet,

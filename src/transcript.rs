@@ -3,7 +3,7 @@
 //!
 //! https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-00#section-3
 
-use crate::{Codec, fields::FieldElement};
+use crate::fields::FieldElement;
 use aes::{
     Aes256,
     cipher::{BlockEncrypt, KeyInit},
@@ -228,8 +228,6 @@ impl Iterator for FiatShamirPseudoRandomFunction {
 
 #[cfg(test)]
 mod tests {
-    use ff::PrimeField;
-
     use super::*;
     use crate::fields::{fieldp256::FieldP256, fieldp521::FieldP521};
 
