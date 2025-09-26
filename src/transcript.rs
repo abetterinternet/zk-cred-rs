@@ -3,7 +3,7 @@
 //!
 //! https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-00#section-3
 
-use crate::{Codec, fields::FieldElement};
+use crate::Codec;
 use aes::{
     Aes256,
     cipher::{BlockEncrypt, KeyInit},
@@ -11,6 +11,7 @@ use aes::{
 use anyhow::{Context, anyhow};
 use crypto_common::{BlockSizeUser, generic_array::GenericArray};
 use sha2::{Digest, Sha256};
+use zk_cred_longfellow_fields::FieldElement;
 
 /// A transcript of the prover's execution of a protocol, used to generate the verifier's public
 /// coin challenges based on the state of the transcript at some moment.
@@ -228,10 +229,9 @@ impl Iterator for FiatShamirPseudoRandomFunction {
 
 #[cfg(test)]
 mod tests {
-    use ff::PrimeField;
-
     use super::*;
-    use crate::fields::{fieldp256::FieldP256, fieldp521::FieldP521};
+    use ff::PrimeField;
+    use zk_cred_longfellow_fields::{fieldp256::FieldP256, fieldp521::FieldP521};
 
     #[test]
     fn deterministic() {

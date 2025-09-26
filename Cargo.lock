@@ -564,7 +564,17 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "zk-cred-longfellow-fields",
  "zstd",
+]
+
+[[package]]
+name = "zk-cred-longfellow-fields"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "byteorder",
+ "ff",
 ]
 
 [[package]]

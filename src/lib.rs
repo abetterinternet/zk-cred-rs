@@ -184,29 +184,26 @@ pub trait Codec: Sized + PartialEq + Eq + std::fmt::Debug {
     }
 }
 
-impl Codec for u8 {
+/// Alias to u8 so that we can implement trait [`Codec`] on it without conflicting with the blanket
+/// implementation of `Codec` for [`FieldElement`].
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct Byte(u8);
+
+impl Codec for Byte {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, anyhow::Error> {
-        bytes.read_u8().context("failed to read u8")
+        bytes.read_u8().context("failed to read u8").map(Self)
     }
 
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), anyhow::Error> {
-        bytes.push(*self);
+        bytes.push(self.0);
 
         Ok(())
     }
 }
 
-impl Codec for u32 {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, anyhow::Error> {
-        bytes
-            .read_u32::<LittleEndian>()
-            .context("failed to read u32")
-    }
-
-    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), anyhow::Error> {
-        bytes
-            .write_u32::<LittleEndian>(*self)
-            .context("failed to write u32")
+impl From<u8> for Byte {
+    fn from(value: u8) -> Self {
+        Self(value)
     }
 }
 
@@ -216,12 +213,7 @@ mod tests {
 
     #[test]
     fn codec_roundtrip_u8() {
-        12u8.roundtrip();
-    }
-
-    #[test]
-    fn codec_roundtrip_u32() {
-        0xffffab65u32.roundtrip();
+        Byte::from(12u8).roundtrip();
     }
 
     #[test]
