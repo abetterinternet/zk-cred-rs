@@ -3,25 +3,43 @@
 use crate::Codec;
 use anyhow::{Context, anyhow};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use ff::PrimeField;
-use std::io::Cursor;
+use std::{
+    fmt::Debug,
+    io::Cursor,
+    ops::{Add, AddAssign, Mul, Neg},
+};
+use subtle::{Choice, ConstantTimeEq};
 
-pub trait FieldElement: PrimeField + for<'a> TryFrom<&'a [u8], Error = anyhow::Error> {
+pub trait FieldElement:
+    Debug
+    + Clone
+    + Copy
+    + ConstantTimeEq
+    + From<u64>
+    + Add<Output = Self>
+    + for<'a> Add<&'a Self, Output = Self>
+    + AddAssign
+    + Mul<Output = Self>
+    + for<'a> Mul<&'a Self, Output = Self>
+    + Neg<Output = Self>
+    + for<'a> TryFrom<&'a [u8], Error = anyhow::Error>
+    + Codec
+{
+    const NUM_BITS: u32;
+    const ZERO: Self;
+    const ONE: Self;
+
     /// Number of bytes needed to represent a field element.
     fn num_bytes() -> usize {
         (Self::NUM_BITS as usize).div_ceil(8)
     }
-}
 
-impl<FE: FieldElement> Codec for FE {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, anyhow::Error> {
-        Self::try_from(&u8::decode_fixed_array(bytes, Self::num_bytes())?)
-    }
+    /// Project an integer into the field.
+    fn from_u128(value: u128) -> Self;
 
-    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), anyhow::Error> {
-        // Get the repr, which will be extra long to fit the limbs, then truncate down to the
-        // encoded length.
-        u8::encode_fixed_array(&self.to_repr().as_ref()[..Self::num_bytes()], bytes)
+    /// Test whether this element is zero.
+    fn is_zero(&self) -> Choice {
+        self.ct_eq(&Self::ZERO)
     }
 }
 
@@ -116,142 +134,18 @@ impl TryFrom<SerializedFieldElement> for u128 {
     }
 }
 
-pub mod fieldp256 {
-    use super::*;
-
-    /// FieldP256 is the field for the NIST P256 elliptic curve.
-    ///
-    /// The generator is computed in [SageMath][1].
-    ///
-    /// [1]: https://sagecell.sagemath.org/?z=eJwFwckNg0AQBMB04IOmp-dMwITh1z5WMgghRPyu2j8L4Nkq1Qqhh1plaHSaRVubpCedIhUwGlxbCEO7k0FQqiKls5ztWLfrnsd85ju-4zeOcT7L-gdkdBh6&lang=sage&interacts=eJyLjgUAARUAuQ==
-    #[derive(ff::PrimeField)]
-    #[PrimeFieldModulus = "115792089210356248762697446949407573530086143415290314195533631308867097853951"]
-    #[PrimeFieldGenerator = "6"]
-    #[PrimeFieldReprEndianness = "little"]
-    pub struct FieldP256([u64; 5]);
-
-    impl FieldElement for FieldP256 {}
-
-    impl TryFrom<&[u8]> for FieldP256 {
-        type Error = anyhow::Error;
-
-        fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-            // Empirically, FieldP256Repr is 40 bytes
-            const REPR_LEN: usize = 40;
-
-            if value.len() > REPR_LEN {
-                return Err(anyhow!("slice is too long for field representation"));
-            }
-
-            let mut padded = [0u8; REPR_LEN];
-            padded[..value.len()].copy_from_slice(value);
-
-            Self::from_repr(FieldP256Repr(padded))
-                // TODO: this is not constant time.
-                .into_option()
-                .ok_or_else(|| anyhow!("cannot construct field element from value"))
-        }
-    }
-}
-
-pub mod fieldp128 {
-    use super::*;
-
-    /// FieldP128 is the field with modulus 2^128 - 2^108 + 1, described in [Section 7.2 of
-    /// draft-google-cfrg-libzk-00][1]. The field does not get a name in the draft, but P128 comes from
-    /// the longfellow implementation ([3]).
-    ///
-    /// The generator was computed in [SageMath][4] (thanks to the hint in
-    /// [`PrimeField::MULTIPLICATIVE_GENERATOR`]).
-    ///
-    /// The endianness is per [Section 7.2.1 of draft-google-cfrg-libzk-00][2].
-    ///
-    /// [1]: https://www.ietf.org/id/draft-google-cfrg-libzk-00.html#section-7.2
-    /// [2]: https://www.ietf.org/id/draft-google-cfrg-libzk-00.html#section-7.2.1
-    /// [3]: https://github.com/google/longfellow-zk/blob/main/lib/algebra/fp_p128.h
-    /// [4]: https://sagecell.sagemath.org/?z=eJxzd9MwijM0stAFkgYW2oaaegVFmbmZJZllqfGpOam5qXklGpoAwO8LXQ==&lang=sage&interacts=eJyLjgUAARUAuQ==
-    #[derive(ff::PrimeField)]
-    #[PrimeFieldModulus = "340282042402384805036647824275747635201"]
-    #[PrimeFieldGenerator = "59"]
-    #[PrimeFieldReprEndianness = "little"]
-    // ff requires that the repr be an array of u64 and despite the fact that 128 bits should be big
-    // enough, also requires 3 u64s.
-    pub struct FieldP128([u64; 3]);
-
-    impl FieldElement for FieldP128 {}
-
-    impl TryFrom<&[u8]> for FieldP128 {
-        type Error = anyhow::Error;
-
-        fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-            // Empirically, FieldP128Repr is 24 bytes
-            const REPR_LEN: usize = 24;
-
-            if value.len() > REPR_LEN {
-                return Err(anyhow!("slice is too long for field representation"));
-            }
-
-            let mut padded = [0u8; REPR_LEN];
-            padded[..value.len()].copy_from_slice(value);
-
-            Self::from_repr(FieldP128Repr(padded))
-                // TODO: this is not constant time.
-                .into_option()
-                .ok_or_else(|| anyhow!("cannot construct field element from value"))
-        }
-    }
-}
-
-pub mod fieldp521 {
-    use super::*;
-
-    /// FieldP521 is the field with modulus 2^521 - 1, described in [Section 7.2 of
-    /// draft-google-cfrg-libzk-00][1].
-    /// The generator was computed in [SageMath][4] (thanks to the hint in
-    /// [`PrimeField::MULTIPLICATIVE_GENERATOR`]).
-    ///
-    /// The endianness is per [Section 7.2.1 of draft-google-cfrg-libzk-00][2].
-    ///
-    /// [1]: https://www.ietf.org/id/draft-google-cfrg-libzk-00.html#section-7.2
-    /// [2]: https://www.ietf.org/id/draft-google-cfrg-libzk-00.html#section-7.2.1
-    /// [4]: https://sagecell.sagemath.org/?z=eJxzd9MwijM1MtQ11NQrKMrMzSzJLEuNT81JzU3NK9HQBACSMgoG&lang=sage&interacts=eJyLjgUAARUAuQ==
-    #[derive(ff::PrimeField)]
-    #[PrimeFieldModulus = "6864797660130609714981900799081393217269435300143305409394463459185543183397656052122559640661454554977296311391480858037121987999716643812574028291115057151"]
-    #[PrimeFieldGenerator = "3"]
-    #[PrimeFieldReprEndianness = "little"]
-    pub struct FieldP521([u64; 9]);
-
-    impl FieldElement for FieldP521 {}
-
-    impl TryFrom<&[u8]> for FieldP521 {
-        type Error = anyhow::Error;
-
-        fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-            // Empirically, FieldP521Repr is 72 bytes
-            const REPR_LEN: usize = 72;
-
-            if value.len() > REPR_LEN {
-                return Err(anyhow!("slice is too long for field representation"));
-            }
-
-            let mut padded = [0u8; REPR_LEN];
-            padded[..value.len()].copy_from_slice(value);
-
-            Self::from_repr(FieldP521Repr(padded))
-                // TODO: this is not constant time
-                .into_option()
-                .ok_or_else(|| anyhow!("cannot construct field element from value"))
-        }
-    }
-}
+pub mod fieldp128;
+pub mod fieldp256;
+pub mod fieldp521;
 
 #[cfg(test)]
 mod tests {
-    use ff::PrimeField;
-
     use crate::{
         Codec,
-        fields::{FieldId, SerializedFieldElement, fieldp128::FieldP128, fieldp256::FieldP256},
+        fields::{
+            FieldElement, FieldId, SerializedFieldElement, fieldp128::FieldP128,
+            fieldp256::FieldP256,
+        },
     };
     use std::io::Cursor;
 
@@ -275,39 +169,29 @@ mod tests {
 
     #[test]
     fn field_p128_from_bytes_accept() {
-        for (label, valid_element) in [
-            (
-                "Fewer bytes than the repr. We should pad with zeroes.",
-                &[0xff][..],
-            ),
-            (
-                "Exactly the length of the repr (24 bytes), but a legal field value.",
-                &[
-                    0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                ][..],
-            ),
-            (
-                "Empty slice should be padded and evaluate to zero.",
-                &[][..],
-            ),
-        ] {
-            FieldP128::try_from(valid_element).expect(label);
-        }
+        FieldP128::try_from(
+            &[
+                0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00,
+            ][..],
+        )
+        .expect("Exactly the length of a field element (16 bytes), but a legal field value.");
     }
 
     #[test]
     fn field_p128_from_bytes_reject() {
         for (label, invalid_element) in [
+            ("Empty slice", &[][..]),
+            ("Slice is too short for the field", &[0xff][..]),
             (
                 "Value is too big for the field",
                 &[
                     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                    0xff, 0xff, 0xff,
                 ][..],
             ),
             (
-                "Slice is too long for the field repr",
+                "Slice is too long for the field",
                 &[
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -337,43 +221,31 @@ mod tests {
 
     #[test]
     fn field_p256_from_bytes_accept() {
-        for (label, valid_element) in [
-            (
-                "Fewer bytes than the repr. We should pad with zeroes.",
-                &[0xff][..],
-            ),
-            (
-                "Exactly the length of the repr (40 bytes), but a legal field value.",
-                &[
-                    0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00,
-                ][..],
-            ),
-            (
-                "Empty slice should be padded and evaluate to zero.",
-                &[][..],
-            ),
-        ] {
-            FieldP256::try_from(valid_element).expect(label);
-        }
+        FieldP256::try_from(
+            &[
+                0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00,
+            ][..],
+        )
+        .expect("Exactly the length of a field element (32 bytes), but a legal field value.");
     }
 
     #[test]
     fn field_p256_from_bytes_reject() {
         for (label, invalid_element) in [
+            ("Empty slice", &[][..]),
+            ("Slice is too short for the field", &[0xff][..]),
             (
                 "Value is too big for the field",
                 &[
                     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
                     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                    0xff,
+                    0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
                 ][..],
             ),
             (
-                "Slice is too long for the field repr",
+                "Slice is too long for the field",
                 &[
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -399,5 +271,83 @@ mod tests {
     #[test]
     fn field_p521_roundtrip() {
         FieldP521::from_u128(111).roundtrip();
+    }
+
+    #[allow(clippy::op_ref)]
+    fn field_element_test<F: FieldElement>() {
+        let two = F::from(2);
+        let four = F::from(4);
+        let neg_one = -F::ONE;
+
+        assert_eq!(F::from(0), F::ZERO);
+        assert_eq!(F::from(1), F::ONE);
+
+        assert_ne!(F::ZERO, F::ONE);
+        assert_ne!(F::ONE, two);
+        assert_ne!(two, four);
+        assert_ne!(four, neg_one);
+
+        assert_eq!(neg_one + &F::ONE, F::ZERO);
+        assert_eq!(neg_one + F::ONE, F::ZERO);
+        let mut temp = neg_one;
+        temp += F::ONE;
+        assert_eq!(temp, F::ZERO);
+
+        assert_eq!(F::ONE + &F::ONE, two);
+        assert_eq!(F::ONE + F::ONE, two);
+        let mut temp = F::ONE;
+        temp += F::ONE;
+        assert_eq!(temp, two);
+
+        assert_eq!(two + &F::ZERO, two);
+        assert_eq!(two + F::ZERO, two);
+        let mut temp = two;
+        temp += F::ZERO;
+        assert_eq!(temp, two);
+
+        assert_eq!(two * &two, four);
+        assert_eq!(two * two, four);
+        assert_eq!(two * &F::ONE, two);
+        assert_eq!(two * F::ONE, two);
+        assert_eq!(two * &F::ZERO, F::ZERO);
+        assert_eq!(two * F::ZERO, F::ZERO);
+
+        assert_eq!(-neg_one, F::ONE);
+
+        for x in [F::ZERO, F::ONE, two, four, neg_one] {
+            let encoded = x.get_encoded().unwrap();
+            assert_eq!(encoded.len(), F::num_bytes());
+            let mut cursor = Cursor::new(&encoded[..]);
+            let decoded = F::decode(&mut cursor).unwrap();
+            assert_eq!(cursor.position(), encoded.len() as u64);
+            assert_eq!(decoded, x);
+        }
+
+        let max_int_encoded = vec![0xffu8; F::num_bytes()];
+        F::decode(&mut Cursor::new(&max_int_encoded)).unwrap_err();
+
+        let zero_encoded = vec![0u8; F::num_bytes()];
+        assert_eq!(F::decode(&mut Cursor::new(&zero_encoded)).unwrap(), F::ZERO);
+
+        let mut one_encoded = zero_encoded.clone();
+        one_encoded[0] = 1;
+        assert_eq!(F::decode(&mut Cursor::new(&one_encoded)).unwrap(), F::ONE);
+
+        assert_eq!(F::from_u128(u64::MAX as u128), F::from(u64::MAX));
+    }
+
+    #[test]
+    fn test_field_p256() {
+        field_element_test::<FieldP256>();
+    }
+
+    #[test]
+    fn test_field_p128() {
+        field_element_test::<FieldP128>();
+    }
+
+    #[test]
+    fn test_field_p521() {
+        field_element_test::<FieldP521>();
     }
 }
