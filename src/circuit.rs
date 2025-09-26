@@ -296,7 +296,7 @@ pub struct Evaluation<FieldElement> {
     /// The value of each of the wires of the circuit after evaluation. An n-layer circuit has n+1
     /// layers of wire values. Layer index 0 is the outputs and layer index n is the inputs. The
     /// length of each layer depends on the number of gates on each layer.
-    wires: Vec<Vec<FieldElement>>,
+    pub wires: Vec<Vec<FieldElement>>,
 }
 
 impl<FieldElement> Evaluation<FieldElement> {
