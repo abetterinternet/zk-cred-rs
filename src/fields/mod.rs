@@ -61,6 +61,8 @@ pub enum FieldId {
     None = 0,
     /// NIST P256.
     P256 = 1,
+    /// GF(2^128)
+    GF2_128 = 4,
     /// [`FieldP128`]
     FP128 = 6,
     // TODO: other field IDs as we need them
@@ -73,6 +75,7 @@ impl TryFrom<u8> for FieldId {
         match value {
             0 => Ok(Self::None),
             1 => Ok(Self::P256),
+            4 => Ok(Self::GF2_128),
             6 => Ok(Self::FP128),
             _ => Err(anyhow!("unknown field ID")),
         }
@@ -101,6 +104,7 @@ impl FieldId {
         match self {
             FieldId::None => 0,
             FieldId::P256 => FieldP256::num_bytes(),
+            FieldId::GF2_128 => 16,
             FieldId::FP128 => FieldP128::num_bytes(),
         }
     }
