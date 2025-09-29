@@ -9,7 +9,7 @@ pub mod transcript;
 /// A serialized size, which is in the range [1, 2^24 -1] per [draft-google-cfrg-libzk-00 section
 /// 7][1]. Serialized in little endian order, occupying 3 bytes.
 ///
-/// [1]: https://www.ietf.org/id/draft-google-cfrg-libzk-00.html#section-7
+/// [1]: https://www.ietf.org/archive/id/draft-google-cfrg-libzk-00.html#section-7
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord, Default, Hash)]
 pub struct Size(u32);
 
@@ -70,7 +70,7 @@ impl Size {
     /// Encode this value as a delta from the previous value in some sequence. The least significant
     /// bit is used as the sign bit, with the actual value shifted up by one position ([1]).
     ///
-    /// [1]: https://www.ietf.org/id/draft-google-cfrg-libzk-00.html#section-7.6-5
+    /// [1]: https://www.ietf.org/archive/id/draft-google-cfrg-libzk-00.html#section-7.6-5
     pub fn encode_delta(&self, previous: Size, bytes: &mut Vec<u8>) -> Result<(), anyhow::Error> {
         let delta = if self.0 >= previous.0 {
             // Delta is positive: shift the delta up by one, leaving sign bit clear
@@ -111,7 +111,7 @@ impl Size {
 ///
 /// Adapted from [prio::codec].
 ///
-/// [1]: https://www.ietf.org/id/draft-google-cfrg-libzk-00.html#section-7
+/// [1]: https://www.ietf.org/archive/id/draft-google-cfrg-libzk-00.html#section-7
 pub trait Codec: Sized + PartialEq + Eq + std::fmt::Debug {
     /// Decode an opaque byte buffer into an instance of this type.
     ///
