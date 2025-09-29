@@ -1,5 +1,8 @@
 //! Various finite field implementations.
-use crate::Codec;
+use crate::{
+    Codec,
+    fields::{fieldp128::FieldP128, fieldp256::FieldP256},
+};
 use anyhow::{Context, anyhow};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::{
@@ -97,8 +100,8 @@ impl FieldId {
     pub fn encoded_length(&self) -> usize {
         match self {
             FieldId::None => 0,
-            FieldId::P256 => 32,
-            FieldId::FP128 => 16,
+            FieldId::P256 => FieldP256::num_bytes(),
+            FieldId::FP128 => FieldP128::num_bytes(),
         }
     }
 }
