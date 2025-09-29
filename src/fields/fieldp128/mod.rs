@@ -27,8 +27,8 @@ use crate::{
 ///
 /// Field elements are serialized in little-endian form, per [Section 7.2.1 of draft-google-cfrg-libzk-00][2].
 ///
-/// [1]: https://www.ietf.org/id/draft-google-cfrg-libzk-00.html#section-7.2
-/// [2]: https://www.ietf.org/id/draft-google-cfrg-libzk-00.html#section-7.2.1
+/// [1]: https://www.ietf.org/archive/id/draft-google-cfrg-libzk-00.html#section-7.2
+/// [2]: https://www.ietf.org/archive/id/draft-google-cfrg-libzk-00.html#section-7.2.1
 /// [3]: https://github.com/google/longfellow-zk/blob/main/lib/algebra/fp_p128.h
 // The `fiat_p128_montgomery_domain_field_element` member must follow the invariant from fiat-crypto
 // that its value must be "strictly less than the prime modulus (m)". We also rely on this invariant

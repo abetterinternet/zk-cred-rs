@@ -277,7 +277,7 @@ pub struct CircuitLayer {
     /// `ceil(log_2(num_wires))`, but apparently not always. The value of output wire i is 0 for
     /// `i >= 2^logw`, because there are no such wires at this layer.
     ///
-    /// [1]: https://www.ietf.org/id/draft-google-cfrg-libzk-00.html#section-5.3.2
+    /// [1]: https://www.ietf.org/archive/id/draft-google-cfrg-libzk-00.html#section-5.3.2
     ///
     /// Longfellow calls this "number of binding rounds for the hand variables".
     pub(crate) logw: Size,
@@ -291,7 +291,7 @@ pub struct CircuitLayer {
     /// value is nonzero is understood to be part of Q, and any quad whose value is zero is
     /// understood to be part of Z.
     ///
-    /// [1]: https://www.ietf.org/id/draft-google-cfrg-libzk-00.html#section-5.3.3
+    /// [1]: https://www.ietf.org/archive/id/draft-google-cfrg-libzk-00.html#section-5.3.3
     pub(crate) quads: Vec<Quad>,
 }
 
@@ -352,7 +352,7 @@ pub struct Quad {
     /// value is 0, the quad is part of Z. If the value is nonzero, the quad is part of Q. See [1]
     /// for discussion of the combined quad.
     ///
-    /// [1]: https://www.ietf.org/id/draft-google-cfrg-libzk-00.html#section-5.3.3
+    /// [1]: https://www.ietf.org/archive/id/draft-google-cfrg-libzk-00.html#section-5.3.3
     pub(crate) const_table_index: Size,
 }
 

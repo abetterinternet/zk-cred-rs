@@ -25,8 +25,8 @@ use crate::{
 ///
 /// Field elements are serialized in little-endian form, per [Section 7.2.1 of draft-google-cfrg-libzk-00][2].
 ///
-/// [1]: https://www.ietf.org/id/draft-google-cfrg-libzk-00.html#section-7.2
-/// [2]: https://www.ietf.org/id/draft-google-cfrg-libzk-00.html#section-7.2.1
+/// [1]: https://www.ietf.org/archive/id/draft-google-cfrg-libzk-00.html#section-7.2
+/// [2]: https://www.ietf.org/archive/id/draft-google-cfrg-libzk-00.html#section-7.2.1
 #[derive(Clone, Copy)]
 pub struct FieldP521(fiat_p521_tight_field_element);
 
