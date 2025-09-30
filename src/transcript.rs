@@ -22,6 +22,29 @@ pub struct Transcript {
     current_fsprf: Option<FiatShamirPseudoRandomFunction>,
 }
 
+/// Tag written to the transcript to identify message type.
+///
+/// The values used in [longfellow-zk][1] disagree with those in [draft-google-cfrg-libzk-01][2]. In
+/// this implementation we aim to interop with longfellow-zk, so we use its values.
+///
+/// [1]: https://github.com/google/longfellow-zk/blob/7a329b35b846fa5b9eca6f0143d0197a73e126a2/lib/random/transcript.h#L71
+/// [2]: https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-01#section-3.1.2
+enum Tag {
+    ByteArray,
+    FieldElement,
+    FieldElementArray,
+}
+
+impl From<Tag> for &'static [u8] {
+    fn from(value: Tag) -> Self {
+        match value {
+            Tag::ByteArray => &[0],
+            Tag::FieldElement => &[1],
+            Tag::FieldElementArray => &[2],
+        }
+    }
+}
+
 impl Transcript {
     /// Initialize a transcript.
     ///
@@ -37,7 +60,7 @@ impl Transcript {
         };
 
         // Initialize the transcript with the session ID
-        transcript.write_bytes(session_id)?;
+        transcript.write_byte_array(session_id)?;
 
         Ok(transcript)
     }
@@ -50,7 +73,7 @@ impl Transcript {
         field_element: &FE,
     ) -> Result<(), anyhow::Error> {
         // Write tag for a single field element
-        self.write_bytes(&[0x1])?;
+        self.write_bytes(Tag::FieldElement.into())?;
 
         // Write field element
         self.write_bytes(field_element.get_encoded()?.as_ref())?;
@@ -70,7 +93,7 @@ impl Transcript {
         }
 
         // Write tag for field element array
-        self.write_bytes(&[0x3])?;
+        self.write_bytes(Tag::FieldElementArray.into())?;
 
         // Write length of array as little endian bytes
         self.write_bytes(&(field_elements.len() as u64).to_le_bytes())?;
@@ -93,8 +116,8 @@ impl Transcript {
             return Err(anyhow!("byte array too big for transcript"));
         }
 
-        // Write tag for byte array
-        self.write_bytes(&[0x2])?;
+        // Write tag for byte array.
+        self.write_bytes(Tag::ByteArray.into())?;
 
         // Write length of array as 8 little endian bytes
         self.write_bytes(&(bytes.len() as u64).to_le_bytes())?;
@@ -119,18 +142,22 @@ impl Transcript {
         Ok(())
     }
 
-    /// Generate a challenge, consisting of `length` field elements.
-    pub fn generate_challenge<FE: FieldElement>(
-        &mut self,
-        length: usize,
-    ) -> Result<Vec<FE>, anyhow::Error> {
-        let fsprf = self.current_fsprf.get_or_insert_with(|| {
+    fn get_current_fsprf(&mut self) -> &mut FiatShamirPseudoRandomFunction {
+        self.current_fsprf.get_or_insert_with(|| {
             // Clone the SHA256 state so we can finalize it
             let fsprf_seed = self.fsprf_seed.clone().finalize();
             // TODO: handle fallible initialization here
             FiatShamirPseudoRandomFunction::new(fsprf_seed.as_slice())
                 .expect("failed to init FSPRF")
-        });
+        })
+    }
+
+    /// Generate a challenge, consisting of `length` field elements.
+    pub fn generate_challenge<FE: FieldElement>(
+        &mut self,
+        length: usize,
+    ) -> Result<Vec<FE>, anyhow::Error> {
+        let fsprf = self.get_current_fsprf();
 
         // TODO: the case where the "field element" is a polynomial?
 
@@ -178,33 +205,9 @@ impl FiatShamirPseudoRandomFunction {
         block.to_vec()
     }
 
+    /// Sample a field element from this FSPRF.
     pub fn sample_field_element<FE: FieldElement>(&mut self) -> FE {
-        self.sample_field_element_counting_rejections().0
-    }
-
-    /// Generate a field element by rejection sampling and return how many rejections were observed.
-    fn sample_field_element_counting_rejections<FE: FieldElement>(&mut self) -> (FE, usize) {
-        let mut rejections = 0;
-        let field_element = loop {
-            // Some fields like P521 have a bit count that isn't congruent to 8. We sample
-            // enough excess bits to get whole bytes and then mask off the excess, which can be
-            // at most 7 bits.
-            // https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-01#section-3.3
-            let num_sampled_bytes = (FE::NUM_BITS as usize).div_ceil(8);
-            let mut sampled_bytes = self.take(num_sampled_bytes).collect::<Vec<_>>();
-            let excess_bits = num_sampled_bytes * 8 - FE::NUM_BITS as usize;
-            if excess_bits != 0 {
-                sampled_bytes[num_sampled_bytes - 1] &= (1 << (8 - excess_bits)) - 1;
-            }
-            // FE::try_from rejects if the value is still too big after masking.
-            // TODO: FE::try_from could fail for reasons besides the generated value being too big
-            if let Ok(fe) = FE::try_from(&sampled_bytes) {
-                break fe;
-            }
-            rejections += 1;
-        };
-
-        (field_element, rejections)
+        FE::sample_from_source(|num_bytes| self.take(num_bytes).collect::<Vec<_>>())
     }
 }
 
@@ -229,7 +232,8 @@ impl Iterator for FiatShamirPseudoRandomFunction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fields::{fieldp256::FieldP256, fieldp521::FieldP521};
+    use crate::fields::{FieldElement, fieldp256::FieldP256};
+    use std::iter::Iterator;
 
     #[test]
     fn deterministic() {
@@ -307,25 +311,46 @@ mod tests {
     }
 
     #[test]
-    fn sample_field_without_excess_bits() {
-        let mut fsprf = FiatShamirPseudoRandomFunction::new(&[0; 32]).unwrap();
-        // Crude test that checks the rejection rate is below 50%.
-        let count = 100;
-        for _ in 0..count {
-            let (_, rejections) = fsprf.sample_field_element_counting_rejections::<FieldP256>();
-            assert!(rejections as f64 / (rejections as f64 + count as f64) < 0.5);
-        }
-    }
+    fn test_vector() {
+        // FSPRF test vector adapted from longfellow-zk/lib/random/transcript_test.cc
+        // https://github.com/google/longfellow-zk/blob/7a329b35b846fa5b9eca6f0143d0197a73e126a2/lib/random/transcript_test.cc#L97
+        let mut transcript = Transcript::initialize(b"test").unwrap();
+        let bytes: Vec<_> = (0..100).collect();
+        transcript.write_byte_array(&bytes).unwrap();
 
-    #[test]
-    fn sample_field_with_excess_bits_without_rejections() {
-        // FieldP521 has excess bits, but every 521 bit integer except the field prime itself, is a
-        // valid field element, so if excess bit masking is correctly implemented, the chance of
-        // rejections is negligible.
-        let mut fsprf = FiatShamirPseudoRandomFunction::new(&[0; 32]).unwrap();
-        for _ in 0..100 {
-            let (_, rejections) = fsprf.sample_field_element_counting_rejections::<FieldP521>();
-            assert_eq!(rejections, 0);
-        }
+        // Check that seed matches SHA-256 of bytes written
+        let seed = transcript.fsprf_seed.clone().finalize();
+        assert_eq!(
+            seed.as_slice(),
+            &[
+                0x60, 0xcd, 0x16, 0x34, 0x92, 0x0f, 0x1c, 0xf2, 0xae, 0x83, 0x15, 0x02, 0xbf, 0x4b,
+                0xb9, 0x3a, 0x60, 0xcd, 0x03, 0xee, 0xb1, 0x9f, 0x93, 0xe2, 0xd6, 0xd5, 0x0d, 0xbd,
+                0x09, 0x84, 0xcb, 0xd8
+            ],
+        );
+
+        let sampled_bytes: Vec<_> = transcript.get_current_fsprf().take(32).collect();
+
+        // Check that sampled bytes match AES256 of counters under the seed
+        assert_eq!(
+            sampled_bytes.as_slice(),
+            &[
+                0x14, 0x1B, 0xBC, 0xBB, 0x54, 0x10, 0xDD, 0xEB, 0x70, 0x39, 0x83, 0x3B, 0x73, 0x65,
+                0x86, 0xA0, 0x20, 0xFD, 0xD5, 0x85, 0x63, 0x79, 0xB6, 0xC6, 0xC6, 0x83, 0xD5, 0xFF,
+                0x0B, 0x7F, 0x29, 0x8B
+            ],
+        );
+
+        // Write another zero byte and check that the seed changes as expected.
+        transcript.write_byte_array(&[0]).unwrap();
+        let seed = transcript.fsprf_seed.clone().finalize();
+        assert_eq!(
+            seed.as_slice(),
+            &[
+                0x18, 0x19, 0x78, 0x38, 0x0b, 0x6f, 0xf3, 0x21, 0x85, 0xc8, 0x28, 0xd9, 0xa0, 0x07,
+                0xee, 0x93, 0x0b, 0xce, 0x2e, 0x94, 0x7f, 0x88, 0x7f, 0x85, 0xb6, 0x4f, 0x39, 0x9a,
+                0x94, 0xcb, 0xe4, 0xa8
+            ],
+        )
     }
 }

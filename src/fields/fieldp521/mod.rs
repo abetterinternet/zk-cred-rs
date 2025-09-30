@@ -2,7 +2,7 @@ use std::{
     cmp::Ordering,
     fmt::{self, Debug},
     io::{self, Read},
-    ops::{Add, AddAssign, Mul, Neg},
+    ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign},
 };
 
 use anyhow::{Context, anyhow};
@@ -13,9 +13,9 @@ use crate::{
     fields::{
         FieldElement,
         fieldp521::ops::{
-            fiat_p521_carry_add, fiat_p521_carry_mul, fiat_p521_carry_opp, fiat_p521_from_bytes,
-            fiat_p521_loose_field_element, fiat_p521_relax, fiat_p521_tight_field_element,
-            fiat_p521_to_bytes,
+            fiat_p521_carry_add, fiat_p521_carry_mul, fiat_p521_carry_opp, fiat_p521_carry_sub,
+            fiat_p521_from_bytes, fiat_p521_loose_field_element, fiat_p521_relax,
+            fiat_p521_tight_field_element, fiat_p521_to_bytes,
         },
     },
 };
@@ -177,6 +177,32 @@ impl AddAssign for FieldP521 {
     fn add_assign(&mut self, rhs: Self) {
         let copy = *self;
         fiat_p521_carry_add(&mut self.0, &copy.0, &rhs.0);
+    }
+}
+
+impl Sub<&Self> for FieldP521 {
+    type Output = Self;
+
+    fn sub(self, rhs: &Self) -> Self::Output {
+        let mut out = fiat_p521_tight_field_element([0; 9]);
+        fiat_p521_carry_sub(&mut out, &self.0, &rhs.0);
+        Self(out)
+    }
+}
+
+impl Sub for FieldP521 {
+    type Output = Self;
+
+    #[allow(clippy::op_ref)]
+    fn sub(self, rhs: Self) -> Self::Output {
+        self - &rhs
+    }
+}
+
+impl SubAssign for FieldP521 {
+    fn sub_assign(&mut self, rhs: Self) {
+        let copy = *self;
+        fiat_p521_carry_sub(&mut self.0, &copy.0, &rhs.0);
     }
 }
 
