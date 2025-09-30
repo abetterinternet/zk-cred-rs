@@ -417,6 +417,7 @@ mod tests {
     fn sample_field_without_excess_bits() {
         // Crude test that checks the rejection rate is below 50%.
         let count = 100;
+        let mut total_rejections = 0;
         for _ in 0..count {
             let (_, rejections) = FieldP256::sample_counting_rejections(|num_bytes| {
                 let mut bytes = vec![0; num_bytes];
@@ -424,15 +425,18 @@ mod tests {
 
                 bytes
             });
-            assert!(rejections as f64 / (rejections as f64 + count as f64) < 0.5);
+
+            total_rejections += rejections;
         }
+        assert!(total_rejections as f64 / (total_rejections as f64 + count as f64) < 0.5);
     }
 
     #[test]
     fn sample_field_with_excess_bits_without_rejections() {
         // FieldP521 has excess bits, but every 521 bit integer except the field prime itself, is a
         // valid field element, so if excess bit masking is correctly implemented, the chance of
-        // rejections is negligible.
+        // rejections is negligible
+        let mut total_rejections = 0;
         for _ in 0..100 {
             let (_, rejections) = FieldP521::sample_counting_rejections(|num_bytes| {
                 let mut bytes = vec![0; num_bytes];
@@ -440,7 +444,8 @@ mod tests {
 
                 bytes
             });
-            assert_eq!(rejections, 0);
+            total_rejections += rejections;
         }
+        assert_eq!(total_rejections, 0);
     }
 }
