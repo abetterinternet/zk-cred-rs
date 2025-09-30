@@ -5,10 +5,11 @@ use crate::{
 };
 use anyhow::{Context, anyhow};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use rand::RngCore;
 use std::{
     fmt::Debug,
     io::Cursor,
-    ops::{Add, AddAssign, Mul, Neg},
+    ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign},
 };
 use subtle::{Choice, ConstantTimeEq};
 
@@ -21,6 +22,9 @@ pub trait FieldElement:
     + Add<Output = Self>
     + for<'a> Add<&'a Self, Output = Self>
     + AddAssign
+    + Sub<Output = Self>
+    + for<'a> Sub<&'a Self, Output = Self>
+    + SubAssign
     + Mul<Output = Self>
     + for<'a> Mul<&'a Self, Output = Self>
     + Neg<Output = Self>
@@ -42,6 +46,53 @@ pub trait FieldElement:
     /// Test whether this element is zero.
     fn is_zero(&self) -> Choice {
         self.ct_eq(&Self::ZERO)
+    }
+
+    /// Generate a field element by rejection sampling.
+    fn sample() -> Self {
+        Self::sample_from_source(|num_bytes| {
+            let mut bytes = vec![0; num_bytes];
+            rand::thread_rng().fill_bytes(&mut bytes);
+
+            bytes
+        })
+    }
+
+    /// Generate a field element by rejection sampling, sampling random bytes from the provided
+    /// source.
+    fn sample_from_source<F>(source: F) -> Self
+    where
+        F: FnMut(usize) -> Vec<u8>,
+    {
+        Self::sample_counting_rejections(source).0
+    }
+
+    /// Generate a field element by rejection sampling and return how many rejections were observed.
+    fn sample_counting_rejections<F>(mut source: F) -> (Self, usize)
+    where
+        F: FnMut(usize) -> Vec<u8>,
+    {
+        let mut rejections = 0;
+        let field_element = loop {
+            // Some fields like P521 have a bit count that isn't congruent to 8. We sample
+            // enough excess bits to get whole bytes and then mask off the excess, which can be
+            // at most 7 bits.
+            // https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-01#section-3.3
+            let num_sampled_bytes = Self::num_bytes();
+            let mut sampled_bytes = source(num_sampled_bytes);
+            let excess_bits = num_sampled_bytes * 8 - Self::NUM_BITS as usize;
+            if excess_bits != 0 {
+                sampled_bytes[num_sampled_bytes - 1] &= (1 << (8 - excess_bits)) - 1;
+            }
+            // FE::try_from rejects if the value is still too big after masking.
+            // TODO: FE::try_from could fail for reasons besides the generated value being too big
+            if let Ok(fe) = Self::try_from(&sampled_bytes) {
+                break fe;
+            }
+            rejections += 1;
+        };
+
+        (field_element, rejections)
     }
 }
 
@@ -142,6 +193,8 @@ pub mod fieldp521;
 
 #[cfg(test)]
 mod tests {
+    use rand::RngCore;
+
     use crate::{
         Codec,
         fields::{
@@ -316,6 +369,13 @@ mod tests {
 
         assert_eq!(-neg_one, F::ONE);
 
+        assert_eq!(F::ONE - F::ONE, F::ZERO);
+        assert_eq!(F::ZERO - F::ONE, neg_one);
+        assert_eq!(two - F::ZERO, two);
+        let mut temp = two;
+        temp -= F::ONE;
+        assert_eq!(temp, F::ONE);
+
         for x in [F::ZERO, F::ONE, two, four, neg_one] {
             let encoded = x.get_encoded().unwrap();
             assert_eq!(encoded.len(), F::num_bytes());
@@ -351,5 +411,36 @@ mod tests {
     #[test]
     fn test_field_p521() {
         field_element_test::<FieldP521>();
+    }
+
+    #[test]
+    fn sample_field_without_excess_bits() {
+        // Crude test that checks the rejection rate is below 50%.
+        let count = 100;
+        for _ in 0..count {
+            let (_, rejections) = FieldP256::sample_counting_rejections(|num_bytes| {
+                let mut bytes = vec![0; num_bytes];
+                rand::thread_rng().fill_bytes(&mut bytes);
+
+                bytes
+            });
+            assert!(rejections as f64 / (rejections as f64 + count as f64) < 0.5);
+        }
+    }
+
+    #[test]
+    fn sample_field_with_excess_bits_without_rejections() {
+        // FieldP521 has excess bits, but every 521 bit integer except the field prime itself, is a
+        // valid field element, so if excess bit masking is correctly implemented, the chance of
+        // rejections is negligible.
+        for _ in 0..100 {
+            let (_, rejections) = FieldP521::sample_counting_rejections(|num_bytes| {
+                let mut bytes = vec![0; num_bytes];
+                rand::thread_rng().fill_bytes(&mut bytes);
+
+                bytes
+            });
+            assert_eq!(rejections, 0);
+        }
     }
 }

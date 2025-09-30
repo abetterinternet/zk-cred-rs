@@ -2,7 +2,7 @@ use std::{
     cmp::Ordering,
     fmt::{self, Debug},
     io::{self, Read},
-    ops::{Add, AddAssign, Mul, Neg},
+    ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign},
 };
 
 use anyhow::{Context, anyhow};
@@ -15,8 +15,8 @@ use crate::{
         fieldp128::ops::{
             fiat_p128_add, fiat_p128_from_bytes, fiat_p128_from_montgomery,
             fiat_p128_montgomery_domain_field_element, fiat_p128_mul,
-            fiat_p128_non_montgomery_domain_field_element, fiat_p128_opp, fiat_p128_to_bytes,
-            fiat_p128_to_montgomery,
+            fiat_p128_non_montgomery_domain_field_element, fiat_p128_opp, fiat_p128_sub,
+            fiat_p128_to_bytes, fiat_p128_to_montgomery,
         },
     },
 };
@@ -189,6 +189,32 @@ impl AddAssign for FieldP128 {
     fn add_assign(&mut self, rhs: Self) {
         let copy = *self;
         fiat_p128_add(&mut self.0, &copy.0, &rhs.0);
+    }
+}
+
+impl Sub<&Self> for FieldP128 {
+    type Output = Self;
+
+    fn sub(self, rhs: &Self) -> Self::Output {
+        let mut out = fiat_p128_montgomery_domain_field_element([0; 2]);
+        fiat_p128_sub(&mut out, &self.0, &rhs.0);
+        Self(out)
+    }
+}
+
+impl Sub for FieldP128 {
+    type Output = Self;
+
+    #[allow(clippy::op_ref)]
+    fn sub(self, rhs: Self) -> Self::Output {
+        self - &rhs
+    }
+}
+
+impl SubAssign for FieldP128 {
+    fn sub_assign(&mut self, rhs: Self) {
+        let copy = *self;
+        fiat_p128_sub(&mut self.0, &copy.0, &rhs.0);
     }
 }
 
