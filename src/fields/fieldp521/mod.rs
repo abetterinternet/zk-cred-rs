@@ -2,7 +2,7 @@ use std::{
     cmp::Ordering,
     fmt::{self, Debug},
     io::{self, Read},
-    ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign},
+    ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
 
 use anyhow::{Context, anyhow};
@@ -80,6 +80,12 @@ impl Debug for FieldP521 {
             write!(f, "{byte:02x}")?;
         }
         write!(f, ")")
+    }
+}
+
+impl Default for FieldP521 {
+    fn default() -> Self {
+        Self::ZERO
     }
 }
 
@@ -226,6 +232,16 @@ impl Mul<Self> for FieldP521 {
     #[allow(clippy::op_ref)]
     fn mul(self, rhs: Self) -> Self::Output {
         self * &rhs
+    }
+}
+
+impl MulAssign for FieldP521 {
+    fn mul_assign(&mut self, rhs: Self) {
+        let mut self_loose = fiat_p521_loose_field_element([0; 9]);
+        fiat_p521_relax(&mut self_loose, &self.0);
+        let mut right_loose = fiat_p521_loose_field_element([0; 9]);
+        fiat_p521_relax(&mut right_loose, &rhs.0);
+        fiat_p521_carry_mul(&mut self.0, &self_loose, &right_loose);
     }
 }
 

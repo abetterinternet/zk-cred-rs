@@ -4,6 +4,7 @@ use std::{fmt::Display, io::Cursor};
 
 pub mod circuit;
 pub mod fields;
+pub mod sumcheck;
 pub mod transcript;
 
 /// A serialized size, which is in the range [1, 2^24 -1] per [draft-google-cfrg-libzk-00 section

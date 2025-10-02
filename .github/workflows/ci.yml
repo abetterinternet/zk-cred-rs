@@ -20,7 +20,7 @@ jobs:
     - name: Format
       run: cargo fmt --message-format human -- --check
     - name: Clippy
-      run: cargo clippy -- -Dwarnings
+      run: cargo clippy --all-targets -- -Dwarnings
     - name: Document
       run: cargo doc
     - name: Test
