@@ -46,7 +46,7 @@ impl<T: std::fmt::Debug + Clone> Indexable<T> for Vec<Vec<Vec<T>>> {
 pub struct SumcheckArray<'a, I, FE> {
     /// The original array of field elements to bind to.
     inner: &'a I,
-    /// The elements being bound to the array. Generally described as "x" in the specification.
+    /// The elements used to bind the array. Generally described as "x" in the specification.
     binding: Vec<FE>,
     /// A factor by which to scale elements of the matrix.
     scalar_factor: FE,
@@ -58,7 +58,7 @@ impl<'a, FE: FieldElement, I: Indexable<FE>> Mul<FE> for SumcheckArray<'a, I, FE
     type Output = Self;
 
     fn mul(mut self, rhs: FE) -> Self::Output {
-        self.scalar_factor = rhs;
+        self.scalar_factor *= rhs;
         self
     }
 }
