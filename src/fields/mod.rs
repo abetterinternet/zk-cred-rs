@@ -9,7 +9,7 @@ use rand::RngCore;
 use std::{
     fmt::Debug,
     io::Cursor,
-    ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign},
+    ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
 use subtle::{Choice, ConstantTimeEq};
 
@@ -27,6 +27,7 @@ pub trait FieldElement:
     + SubAssign
     + Mul<Output = Self>
     + for<'a> Mul<&'a Self, Output = Self>
+    + MulAssign
     + Neg<Output = Self>
     + for<'a> TryFrom<&'a [u8], Error = anyhow::Error>
     + Codec
@@ -366,6 +367,14 @@ mod tests {
         assert_eq!(two * F::ONE, two);
         assert_eq!(two * &F::ZERO, F::ZERO);
         assert_eq!(two * F::ZERO, F::ZERO);
+
+        let mut temp = F::ONE;
+        temp *= F::ONE;
+        assert_eq!(temp, F::ONE);
+        temp *= two;
+        assert_eq!(temp, two);
+        temp *= two;
+        assert_eq!(temp, two + two);
 
         assert_eq!(-neg_one, F::ONE);
 

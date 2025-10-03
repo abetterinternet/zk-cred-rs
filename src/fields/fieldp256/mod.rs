@@ -2,7 +2,7 @@ use std::{
     cmp::Ordering,
     fmt::{self, Debug},
     io::{self, Read},
-    ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign},
+    ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
 
 use anyhow::{Context, anyhow};
@@ -232,6 +232,13 @@ impl Mul<Self> for FieldP256 {
     #[allow(clippy::op_ref)]
     fn mul(self, rhs: Self) -> Self::Output {
         self * &rhs
+    }
+}
+
+impl MulAssign for FieldP256 {
+    fn mul_assign(&mut self, rhs: Self) {
+        let copy = *self;
+        fiat_p256_mul(&mut self.0, &copy.0, &rhs.0)
     }
 }
 
