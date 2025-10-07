@@ -63,8 +63,13 @@ impl<FE: FieldElement> Proof<FE> {
 
         // Choose the bindings for the output layer.
         // The spec says to generate "circuit.lv" field elements, which I think has to mean the
-        // number of bits needed to describe an output wire.
-        let output_wire_bindings = transcript.generate_challenge(circuit.layers[0].logw.into())?;
+        // number of bits needed to describe an output wire, because the idea is that binding to
+        // challenges of this length will reduce the 3D quad down to 2D.
+        let output_wire_bindings = transcript.generate_challenge(circuit.logw())?;
+        // longfellow-zk allocates two 40 element arrays and then re-uses them for each layer's
+        // bindings. This saves allocations, but you have to keep track of the current length of the
+        // bindings when calling SumcheckArray::bind. We could probably simulate that by taking a
+        // &mut [FE] from a Vec<FE>?
         let mut bindings = [output_wire_bindings.clone(), output_wire_bindings];
 
         // Initialize the transcript per "special rules for the first message", with adjustments to
@@ -79,11 +84,7 @@ impl<FE: FieldElement> Proof<FE> {
         // elements, but longfellow-zk writes each input as an individual field element. Also,
         // longfellow-zk only appends the *public* inputs, but the specification isn't clear about
         // that.
-        for input in evaluation
-            .inputs()
-            .iter()
-            .take(circuit.num_public_inputs.into())
-        {
+        for input in evaluation.public_inputs(circuit.num_public_inputs.into()) {
             transcript.write_field_element(input)?;
         }
 
@@ -91,6 +92,10 @@ impl<FE: FieldElement> Proof<FE> {
         // write an array of field elements. But longfellow-zk writes a single zero, regardless of
         // how many outputs the actual circuit has.
         transcript.write_field_element(&FE::ZERO)?;
+        // Specification interpretation verification: all the outputs should be zero
+        for output in evaluation.outputs() {
+            assert_eq!(output, &FE::ZERO);
+        }
 
         for (layer_index, layer) in circuit.layers.iter().enumerate() {
             // Choose alpha and beta for this layer
@@ -111,6 +116,12 @@ impl<FE: FieldElement> Proof<FE> {
             for index in 1..bound_quad.len() {
                 assert!(bound_quad[index].is_empty());
             }
+
+            // Allocate room for the new bindings this layer will generate
+            let mut new_bindings = [
+                vec![FE::ZERO; layer.logw.into()],
+                vec![FE::ZERO; layer.logw.into()],
+            ];
 
             // Generate the pad for this layer. The pad has the same structure as the proof since the
             // one has to be substracted from the other.
@@ -136,8 +147,15 @@ impl<FE: FieldElement> Proof<FE> {
                 layer.logw.into()
             ];
 
-            let mut left_wires = evaluation.wires[layer_index].clone();
-            let mut right_wires = evaluation.wires[layer_index].clone();
+            // (VL, VR) = wires
+            // The specification says "wires[j]" where 0 <= j < circuit.num_layers. Recall that
+            // evaluation.wires includes the circuit output wires at index 0 so we have to go up one
+            // to get the input wires for this layer.
+            // This makes sense because over the course of the loop that follows, we'll bind each of
+            // left_ and right_wires to a challenge layer.logw times, exactly enough to reduce these
+            // arrays to a single element, which become the layer commitments vl and vr.
+            let mut left_wires = evaluation.wires[layer_index + 1].clone();
+            let mut right_wires = evaluation.wires[layer_index + 1].clone();
 
             for (round, (pad_polynomials, proof_polynomials)) in layer_pad
                 .polynomials
@@ -149,22 +167,30 @@ impl<FE: FieldElement> Proof<FE> {
                     // Implements the polynomial from the specification:
                     // Let p(x) = SUM_{l, r} bind(QUAD, x)[l, r] * bind(VL, x)[l] * VR[r]
                     let evaluate_polynomial = |at: FE| {
-                        let mut point = FE::ZERO;
                         let bind = &[at];
                         let bound_quad_at = bound_quad.bind(bind);
                         let bound_left_wires = left_wires.bind(bind);
 
-                        for left_wire_index in 0..2usize.pow(layer.logw.0) {
-                            for right_wire_index in 0..2usize.pow(layer.logw.0) {
+                        let mut point = FE::ZERO;
+
+                        // SUM_{l, r} is interpreted to mean evaluating the expression at all
+                        // possible left and right wire indices.
+                        // In sumcheck terms, we're evaluating the function at each of the vertices
+                        // of a 2*logw-dimensional unit hypercube, or evaluating the function at all
+                        // possible 2*logw length bitstrings.
+                        for left_wire_index in 0..left_wires.len() {
+                            for right_wire_index in 0..right_wires.len() {
+                                // bind(QUAD, x)[l, r]
                                 // Fix g = 0 when indexing into the bound quad since all other
                                 // elements are zero
-                                point +=
-                                // bind(QUAD, x)[l, r]
-                                bound_quad_at.element([0, left_wire_index, right_wire_index])
-                                // * bind(VL, x)[l]
-                                * bound_left_wires.element(left_wire_index)
-                                // * VR[r]
-                                * right_wires.element(right_wire_index);
+                                let bound_quad_term =
+                                    bound_quad_at.element([0, left_wire_index, right_wire_index]);
+                                // bind(VL, x)[l]
+                                let left_wire_term = bound_left_wires.element(left_wire_index);
+                                // VR[r]
+                                let right_wire_term = right_wires.element(right_wire_index);
+
+                                point += bound_quad_term * left_wire_term + right_wire_term;
                             }
                         }
                         point
@@ -182,10 +208,10 @@ impl<FE: FieldElement> Proof<FE> {
 
                     proof_polynomials[hand] = poly_evaluation;
 
+                    // Generate an element of the binding for the next layer.
                     let challenge = transcript.generate_challenge(1)?;
 
-                    // Generate an element of the binding for the next layer.
-                    bindings[hand][round] = challenge[0];
+                    new_bindings[hand][round] = challenge[0];
 
                     // Bind the current left wires and the quad to the challenge
                     left_wires = left_wires.bind(&challenge);
@@ -194,6 +220,14 @@ impl<FE: FieldElement> Proof<FE> {
                     swap(&mut left_wires, &mut right_wires);
                     bound_quad = bound_quad.transpose();
                 }
+            }
+
+            // Specification interpretation verification: over the course of the loop above, we bind
+            // left_wires and right_wires to single field elements enough times that both should be
+            // reduced to a single non-zero element.
+            for (left_wire, right_wire) in left_wires.iter().zip(right_wires.iter()).skip(1) {
+                assert_eq!(left_wire, &FE::ZERO, "left wires: {left_wires:#?}");
+                assert_eq!(right_wire, &FE::ZERO, "right wires: {right_wires:#?}");
             }
 
             let layer_proof = ProofLayer {
@@ -207,6 +241,8 @@ impl<FE: FieldElement> Proof<FE> {
             transcript.write_field_element(&layer_proof.vr)?;
 
             proof.layers.push(layer_proof);
+
+            bindings = new_bindings;
         }
 
         Ok(proof)

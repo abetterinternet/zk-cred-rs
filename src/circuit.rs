@@ -119,6 +119,17 @@ impl Codec for Circuit {
 }
 
 impl Circuit {
+    /// The number of bits needed to describe an output wire. Analogous to `Layer::logw`.
+    pub fn logw(&self) -> usize {
+        // u32::ilog2 rounds down, so add 1 if num_outputs was not a power of 2
+        self.num_outputs.0.ilog2() as usize
+            + if self.num_outputs.0.is_power_of_two() {
+                0
+            } else {
+                1
+            }
+    }
+
     /// Retrieve the requested constant from the circuit's constant table, if it exists.
     pub fn constant<F: FieldElement>(&self, index: Size) -> Result<F, anyhow::Error> {
         F::try_from(
@@ -266,8 +277,12 @@ impl Circuit {
         } else {
             self.layers[layer_index - 1].num_wires
         };
+
+        // Outer vector: index by gate number
         let mut combined_quad = vec![
+            // Inner vector: index by left wire number
             vec![
+                // Innermost vector: index by right wire number
                 vec![FE::ZERO; self.layers[layer_index].num_wires.into()];
                 self.layers[layer_index].num_wires.into()
             ];
@@ -304,9 +319,10 @@ impl<FieldElement> Evaluation<FieldElement> {
         self.wires[0].as_slice()
     }
 
-    /// Get the inputs for this evaluation.
-    pub fn inputs(&self) -> &[FieldElement] {
-        self.wires[self.wires.len() - 1].as_slice()
+    /// Get the public inputs for this evaluation.
+    pub fn public_inputs(&self, num_public_inputs: usize) -> &[FieldElement] {
+        // We prepended 1 to the input layer in Circuit::evaluate, so skip that here
+        &self.wires[self.wires.len() - 1][1..(num_public_inputs + 1)]
     }
 }
 
@@ -325,7 +341,7 @@ pub struct CircuitLayer {
     ///
     /// Longfellow calls this "number of binding rounds for the hand variables".
     pub(crate) logw: Size,
-    /// Number of wires/inputs to the layer.
+    /// Number of wires entering the layer, hence the number of inputs.
     pub(crate) num_wires: Size,
     /// Quads describing this layer of the circuit. A variable length array.
     ///
