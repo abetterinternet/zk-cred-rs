@@ -9,7 +9,7 @@ use rand::RngCore;
 use std::{
     fmt::Debug,
     io::Cursor,
-    ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign},
+    ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
 use subtle::{Choice, ConstantTimeEq};
 
@@ -18,6 +18,7 @@ pub trait FieldElement:
     + Clone
     + Copy
     + ConstantTimeEq
+    + Default
     + From<u64>
     + Add<Output = Self>
     + for<'a> Add<&'a Self, Output = Self>
@@ -27,6 +28,7 @@ pub trait FieldElement:
     + SubAssign
     + Mul<Output = Self>
     + for<'a> Mul<&'a Self, Output = Self>
+    + MulAssign
     + Neg<Output = Self>
     + for<'a> TryFrom<&'a [u8], Error = anyhow::Error>
     + Codec
@@ -328,7 +330,7 @@ mod tests {
         FieldP521::from_u128(111).roundtrip();
     }
 
-    #[allow(clippy::op_ref)]
+    #[allow(clippy::op_ref, clippy::eq_op)]
     fn field_element_test<F: FieldElement>() {
         let two = F::from(2);
         let four = F::from(4);
@@ -366,6 +368,14 @@ mod tests {
         assert_eq!(two * F::ONE, two);
         assert_eq!(two * &F::ZERO, F::ZERO);
         assert_eq!(two * F::ZERO, F::ZERO);
+
+        let mut temp = F::ONE;
+        temp *= F::ONE;
+        assert_eq!(temp, F::ONE);
+        temp *= two;
+        assert_eq!(temp, two);
+        temp *= two;
+        assert_eq!(temp, two + two);
 
         assert_eq!(-neg_one, F::ONE);
 

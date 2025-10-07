@@ -2,7 +2,7 @@ use std::{
     cmp::Ordering,
     fmt::{self, Debug},
     io::{self, Read},
-    ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign},
+    ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
 
 use anyhow::{Context, anyhow};
@@ -90,6 +90,12 @@ impl Debug for FieldP128 {
         let residue = self.as_residue();
         let value = residue.0[0] as u128 | ((residue.0[1] as u128) << 64);
         write!(f, "FieldP128({value})")
+    }
+}
+
+impl Default for FieldP128 {
+    fn default() -> Self {
+        Self::ZERO
     }
 }
 
@@ -234,6 +240,13 @@ impl Mul<Self> for FieldP128 {
     #[allow(clippy::op_ref)]
     fn mul(self, rhs: Self) -> Self::Output {
         self * &rhs
+    }
+}
+
+impl MulAssign for FieldP128 {
+    fn mul_assign(&mut self, rhs: Self) {
+        let copy = *self;
+        fiat_p128_mul(&mut self.0, &copy.0, &rhs.0)
     }
 }
 
