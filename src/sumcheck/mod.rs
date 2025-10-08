@@ -1,4 +1,4 @@
-//! Commitment to a padded proof of circuit evaluation, per Section 6 ([1]).
+//! Padded sumcheck proof of circuit evaluation, per Section 6 ([1]).
 //!
 //! [1]: https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-01#section-6
 
@@ -8,7 +8,7 @@ use crate::{
     sumcheck::bind::{ElementwiseSum, SumcheckArray},
     transcript::Transcript,
 };
-use std::mem::swap;
+use std::{iter::repeat_with, mem::swap};
 
 mod bind;
 
@@ -20,7 +20,7 @@ pub struct Proof<FieldElement> {
 
 impl<FE: FieldElement> Proof<FE> {
     /// Decode a proof from the bytes. This can't be an implementation of [`Codec`] because we need
-    /// the circuit this is a proof of to know how many layers there rae.
+    /// the circuit this is a proof of to know how many layers there are.
     pub fn decode(
         circuit: &Circuit,
         bytes: &mut std::io::Cursor<&[u8]>,
@@ -47,7 +47,8 @@ impl<FE: FieldElement> Proof<FE> {
 }
 
 impl<FE: FieldElement> Proof<FE> {
-    /// Construct a commitment to a padded transcript of the given evaluation of the circuit.
+    /// Construct a padded proof of the transcript of the given evaluation of the circuit and return
+    /// the prover messages needed for the verifier to reconstruct the transcript.
     pub fn new<PadGenerator>(
         circuit: &Circuit,
         evaluation: &Evaluation<FE>,
@@ -117,6 +118,10 @@ impl<FE: FieldElement> Proof<FE> {
                 assert!(bound_quad[index].is_empty());
             }
 
+            // Reduce bound_quad to a Vec<Vec<FE>> so that we can later bind to the correct
+            // dimension.
+            let mut bound_quad = bound_quad.remove(0);
+
             // Allocate room for the new bindings this layer will generate
             let mut new_bindings = [
                 vec![FE::ZERO; layer.logw.into()],
@@ -124,15 +129,22 @@ impl<FE: FieldElement> Proof<FE> {
             ];
 
             // Generate the pad for this layer. The pad has the same structure as the proof since the
-            // one has to be substracted from the other.
+            // one has to be subtracted from the other.
             let layer_pad = ProofLayer {
-                polynomials: vec![
-                    [Polynomial {
-                        p0: pad_generator(),
-                        p2: pad_generator(),
-                    }; 2];
-                    layer.logw.into()
-                ],
+                polynomials: repeat_with(|| {
+                    [
+                        Polynomial {
+                            p0: pad_generator(),
+                            p2: pad_generator(),
+                        },
+                        Polynomial {
+                            p0: pad_generator(),
+                            p2: pad_generator(),
+                        },
+                    ]
+                })
+                .take(layer.logw.into())
+                .collect(),
                 vl: pad_generator(),
                 vr: pad_generator(),
             };
@@ -153,7 +165,7 @@ impl<FE: FieldElement> Proof<FE> {
             // to get the input wires for this layer.
             // This makes sense because over the course of the loop that follows, we'll bind each of
             // left_ and right_wires to a challenge layer.logw times, exactly enough to reduce these
-            // arrays to a single element, which become the layer commitments vl and vr.
+            // arrays to a single element, which become the layer claims vl and vr.
             let mut left_wires = evaluation.wires[layer_index + 1].clone();
             let mut right_wires = evaluation.wires[layer_index + 1].clone();
 
@@ -168,8 +180,17 @@ impl<FE: FieldElement> Proof<FE> {
                     // Let p(x) = SUM_{l, r} bind(QUAD, x)[l, r] * bind(VL, x)[l] * VR[r]
                     let evaluate_polynomial = |at: FE| {
                         let bind = &[at];
-                        let bound_quad_at = bound_quad.bind(bind);
-                        let bound_left_wires = left_wires.bind(bind);
+                        // Recall that we effectively reduced the dimension of the combined quad to
+                        // 2 by binding it. Now we have to _actually_ reduce it to a Vec<Vec<FE>> so
+                        // that the binding will be applied appropriately.
+                        let bound_quad_at = bound_quad.bind_assert(bind);
+                        let bound_left_wires = left_wires.bind_assert(bind);
+
+                        // Specification interpretation verification: the back half of
+                        // bound_left_wires should be zeroes after binding.
+                        for i in left_wires.len().div_ceil(2)..left_wires.len() {
+                            assert_eq!(bound_left_wires.element(i), FE::ZERO);
+                        }
 
                         let mut point = FE::ZERO;
 
@@ -177,29 +198,31 @@ impl<FE: FieldElement> Proof<FE> {
                         // possible left and right wire indices.
                         // In sumcheck terms, we're evaluating the function at each of the vertices
                         // of a 2*logw-dimensional unit hypercube, or evaluating the function at all
-                        // possible 2*logw length bitstrings.
-                        for left_wire_index in 0..left_wires.len() {
+                        // possible 2*logw length bitstrings, or actually 2*logw - 1 since we can
+                        // skip the back half of bound_left_wires, which we know to contain only
+                        // zeroes since we bound it.
+                        for left_wire_index in 0..left_wires.len().div_ceil(2) {
                             for right_wire_index in 0..right_wires.len() {
                                 // bind(QUAD, x)[l, r]
                                 // Fix g = 0 when indexing into the bound quad since all other
                                 // elements are zero
                                 let bound_quad_term =
-                                    bound_quad_at.element([0, left_wire_index, right_wire_index]);
+                                    bound_quad_at.element([left_wire_index, right_wire_index]);
                                 // bind(VL, x)[l]
                                 let left_wire_term = bound_left_wires.element(left_wire_index);
                                 // VR[r]
                                 let right_wire_term = right_wires.element(right_wire_index);
 
-                                point += bound_quad_term * left_wire_term + right_wire_term;
+                                point += bound_quad_term * left_wire_term * right_wire_term;
                             }
                         }
                         point
                     };
 
-                    // Evaluate the polynomial at P0 and P2, substracting the pad
+                    // Evaluate the polynomial at P0 and P2, subtracting the pad
                     let poly_evaluation = Polynomial {
                         p0: evaluate_polynomial(FE::ZERO) - pad_polynomials[hand].p0,
-                        p2: evaluate_polynomial(FE::ONE + FE::ONE) - pad_polynomials[hand].p2,
+                        p2: evaluate_polynomial(FE::TWO) - pad_polynomials[hand].p2,
                     };
 
                     // Commit to the padded polynomial.
@@ -214,7 +237,7 @@ impl<FE: FieldElement> Proof<FE> {
                     new_bindings[hand][round] = challenge[0];
 
                     // Bind the current left wires and the quad to the challenge
-                    left_wires = left_wires.bind(&challenge);
+                    left_wires = left_wires.bind_assert(&challenge);
                     bound_quad = bound_quad.bind(&challenge);
 
                     swap(&mut left_wires, &mut right_wires);
@@ -225,8 +248,10 @@ impl<FE: FieldElement> Proof<FE> {
             // Specification interpretation verification: over the course of the loop above, we bind
             // left_wires and right_wires to single field elements enough times that both should be
             // reduced to a single non-zero element.
-            for (left_wire, right_wire) in left_wires.iter().zip(right_wires.iter()).skip(1) {
+            for left_wire in left_wires.iter().skip(1) {
                 assert_eq!(left_wire, &FE::ZERO, "left wires: {left_wires:#?}");
+            }
+            for right_wire in right_wires.iter().skip(1) {
                 assert_eq!(right_wire, &FE::ZERO, "right wires: {right_wires:#?}");
             }
 

@@ -74,6 +74,7 @@ impl FieldElement for FieldP256 {
     const NUM_BITS: u32 = 256;
     const ZERO: Self = Self(fiat_p256_montgomery_domain_field_element([0; 4]));
     const ONE: Self = Self::from_u128_const(1);
+    const TWO: Self = Self::from_u128_const(2);
 
     fn from_u128(value: u128) -> Self {
         Self::from_u128_const(value)
