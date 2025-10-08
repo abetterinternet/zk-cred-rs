@@ -58,22 +58,6 @@ impl<FE: FieldElement> Proof<FE> {
     where
         PadGenerator: FnMut() -> FE,
     {
-        let mut proof = Proof {
-            layers: Vec::with_capacity(circuit.num_layers.into()),
-        };
-
-        // Choose the bindings for the output layer.
-        // The spec says to generate "circuit.lv" field elements, which I think has to mean the
-        // number of bits needed to describe an output wire, because the idea is that binding to
-        // challenges of this length will reduce the 3D quad down to 2D.
-        let output_wire_bindings = transcript.generate_challenge(circuit.logw())?;
-
-        // longfellow-zk allocates two 40 element arrays and then re-uses them for each layer's
-        // bindings. This saves allocations, but you have to keep track of the current length of the
-        // bindings when calling SumcheckArray::bind. We could probably simulate that by taking a
-        // &mut [FE] from a Vec<FE>?
-        let mut bindings = [output_wire_bindings.clone(), output_wire_bindings];
-
         // Initialize the transcript per "special rules for the first message", with adjustments to
         // match longfellow-zk.
         // https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-01#section-3.1.3
@@ -108,6 +92,30 @@ impl<FE: FieldElement> Proof<FE> {
         // the inputs to the circuit (public and private) to the transcript. This presumably
         // constitutes the "prover message" described in 3.1.3 item 1.
         transcript.write_field_element_array(evaluation.inputs())?;
+
+        // Choose the bindings for the output layer.
+        // The spec says to generate "circuit.lv" field elements, which I think has to mean the
+        // number of bits needed to describe an output wire, because the idea is that binding to
+        // challenges of this length will reduce the 3D quad down to 2D.
+        let output_wire_bindings = transcript.generate_challenge(circuit.logw())?;
+        let mut bindings = [output_wire_bindings.clone(), output_wire_bindings];
+
+        // longfellow-zk allocates two 40 element arrays and then re-uses them for each layer's
+        // bindings. This saves allocations, but you have to keep track of the current length of the
+        // bindings when calling SumcheckArray::bind. We could probably simulate that by taking a
+        // &mut [FE] from a Vec<FE>?
+        // However this optimization also introduces a bug: their TranscriptSumcheck::begin_layer
+        // samples enough elements from the FSPRF to fill the array _up to its allocated size_,
+        // regardless of the number of output wires. This means the FSPRF gets fast-forwarded by
+        // 80 - 2 * circuit.logw, and since no writes occur between this point and when we next
+        // sample field elements, that affects the rest of the protocol run. In order to be
+        // compatible with their test vector, we generate and discard an equal number of field
+        // elements.
+        transcript.generate_challenge::<FE>(80 - 2 * circuit.logw())?;
+
+        let mut proof = Proof {
+            layers: Vec::with_capacity(circuit.num_layers.into()),
+        };
 
         for (layer_index, layer) in circuit.layers.iter().enumerate() {
             // Choose alpha and beta for this layer
