@@ -65,6 +65,7 @@ impl FieldElement for FieldP521 {
     const NUM_BITS: u32 = 521;
     const ZERO: Self = Self(fiat_p521_tight_field_element([0; 9]));
     const ONE: Self = Self::from_u128_const(1);
+    const TWO: Self = Self::from_u128_const(2);
 
     fn from_u128(value: u128) -> Self {
         Self::from_u128_const(value)

@@ -45,6 +45,13 @@ impl<FE: FieldElement> SumcheckArray<FE> for Vec<FE> {
     }
 
     fn bind(&self, binding: &[FE]) -> Self {
+        // Specification interpretation verification: we expect to be binding down to a single
+        // element, but no further.
+        assert!(
+            binding.is_empty() || self.len() > 1,
+            "binding over a dimension that's already reduced to a single element"
+        );
+
         let mut bound = self.clone();
         for binding_element in binding {
             // B[i] = (1 - x) * A[2 * i] + x * A[2 * i + 1]
@@ -82,6 +89,13 @@ impl<FE: FieldElement> SumcheckArray<FE> for Vec<Vec<FE>> {
     }
 
     fn bind(&self, binding: &[FE]) -> Self {
+        // Specification interpretation verification: we expect to be binding down to a single
+        // element, but no further.
+        assert!(
+            binding.is_empty() || self.len() > 1,
+            "binding over a dimension that's already reduced to a single element"
+        );
+
         let mut bound = self.clone();
         for binding_element in binding {
             // The back half of B[i] will always be zero so we can skip computing those elements
@@ -115,12 +129,21 @@ impl<FE: FieldElement> SumcheckArray<FE> for Vec<Vec<FE>> {
     }
 
     fn transpose(&self) -> Self {
-        let mut transposed = vec![vec![FE::ZERO; self.len()]; self[0].len()];
+        // find biggest row so we can allocate appropriately
+        let mut biggest = 0;
+        for row in self {
+            if row.len() > biggest {
+                biggest = row.len();
+            }
+        }
+
+        let mut transposed = vec![vec![FE::ZERO; self.len()]; biggest];
 
         for i in 0..self.len() {
             #[allow(clippy::needless_range_loop)]
             for j in 0..self[i].len() {
-                transposed[j][i] = self.element([i, j])
+                let element = self.element([i, j]);
+                transposed[j][i] = element;
             }
         }
 
@@ -140,6 +163,13 @@ impl<FE: FieldElement> SumcheckArray<FE> for Vec<Vec<Vec<FE>>> {
     }
 
     fn bind(&self, binding: &[FE]) -> Self {
+        // Specification interpretation verification: we expect to be binding down to a single
+        // element, but no further.
+        assert!(
+            binding.is_empty() || self.len() > 1,
+            "binding over a dimension that's already reduced to a single element"
+        );
+
         let mut bound = self.clone();
         for binding_element in binding {
             // The back half of B[i] is always zero so we can skip computing those elements.

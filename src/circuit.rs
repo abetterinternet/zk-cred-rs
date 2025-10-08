@@ -119,6 +119,17 @@ impl Codec for Circuit {
 }
 
 impl Circuit {
+    /// The number of bits needed to describe an output wire. Analogous to `Layer::logw`.
+    pub fn logw(&self) -> usize {
+        // u32::ilog2 rounds down, so add 1 if num_outputs was not a power of 2
+        self.num_outputs.0.ilog2() as usize
+            + if self.num_outputs.0.is_power_of_two() {
+                0
+            } else {
+                1
+            }
+    }
+
     /// Retrieve the requested constant from the circuit's constant table, if it exists.
     pub fn constant<F: FieldElement>(&self, index: Size) -> Result<F, anyhow::Error> {
         F::try_from(
@@ -129,6 +140,11 @@ impl Circuit {
                 .clone()
                 .0,
         )
+    }
+
+    /// The number of quads (aka terms?) in this circuit.
+    pub fn num_quads(&self) -> usize {
+        self.layers.iter().map(|layer| layer.quads.len()).sum()
     }
 
     /// Evaluate the circuit with the provided inputs.
@@ -249,6 +265,48 @@ impl Circuit {
         wires.reverse();
         Ok(Evaluation { wires })
     }
+
+    /// Compute the combined quad `QZ = Q + beta * Z` for the specified layer.
+    ///
+    /// Because Q and Z are disjoint, this amounts to traversing the layer's quads, identifying Z
+    /// quads (the ones whose value is zero) and setting their value to beta. This is then compiled
+    /// into a three-dimensional array indexed by gate index, left wire index, and right wire index.
+    pub fn combined_quad<FE: FieldElement>(
+        &self,
+        layer_index: usize,
+        beta: FE,
+    ) -> Result<Vec<Vec<Vec<FE>>>, anyhow::Error> {
+        // The number of gates on this layer is the number of input wires to the next layer
+        let num_gates = if layer_index == 0 {
+            self.num_outputs
+        } else {
+            self.layers[layer_index - 1].num_wires
+        };
+
+        // Outer vector: index by gate number
+        let mut combined_quad = vec![
+            // Inner vector: index by left wire number
+            vec![
+                // Innermost vector: index by right wire number
+                vec![FE::ZERO; self.layers[layer_index].num_wires.into()];
+                self.layers[layer_index].num_wires.into()
+            ];
+            num_gates.into()
+        ];
+
+        for quad in &self.layers[layer_index].quads {
+            let quad_value: FE = self.constant(quad.const_table_index)?;
+
+            combined_quad[usize::from(quad.gate_index)][usize::from(quad.left_wire_index)]
+                [usize::from(quad.right_wire_index)] = if quad_value.is_zero().into() {
+                beta
+            } else {
+                quad_value
+            };
+        }
+
+        Ok(combined_quad)
+    }
 }
 
 /// The evaluation of a circuit.
@@ -257,12 +315,22 @@ pub struct Evaluation<FieldElement> {
     /// The value of each of the wires of the circuit after evaluation. An n-layer circuit has n+1
     /// layers of wire values. Layer index 0 is the outputs and layer index n is the inputs. The
     /// length of each layer depends on the number of gates on each layer.
-    wires: Vec<Vec<FieldElement>>,
+    pub wires: Vec<Vec<FieldElement>>,
 }
 
 impl<FieldElement> Evaluation<FieldElement> {
+    /// Get the outputs of this evaluation.
     pub fn outputs(&self) -> &[FieldElement] {
         self.wires[0].as_slice()
+    }
+
+    /// Get the public inputs for this evaluation.
+    pub fn public_inputs(&self, num_public_inputs: usize) -> &[FieldElement] {
+        &self.inputs()[..num_public_inputs]
+    }
+
+    pub fn inputs(&self) -> &[FieldElement] {
+        &self.wires[self.wires.len() - 1]
     }
 }
 
@@ -281,7 +349,7 @@ pub struct CircuitLayer {
     ///
     /// Longfellow calls this "number of binding rounds for the hand variables".
     pub(crate) logw: Size,
-    /// Number of wires/inputs to the layer.
+    /// Number of wires entering the layer, hence the number of inputs.
     pub(crate) num_wires: Size,
     /// Quads describing this layer of the circuit. A variable length array.
     ///
@@ -451,6 +519,9 @@ pub(crate) mod tests {
         /// The serialized circuit, decompressed from a file alongside the JSON descriptor.
         #[serde(default)]
         pub(crate) serialized_circuit: Vec<u8>,
+        /// The serialized padded sumcheck proof of the circuit's execution.
+        #[serde(default)]
+        pub(crate) serialized_proof: Vec<u8>,
     }
 
     impl CircuitTestVector {
@@ -462,13 +533,14 @@ pub(crate) mod tests {
             ))
             .unwrap();
 
-            let mut compressed = Vec::new();
+            let mut compressed_circuit = Vec::new();
             File::open(format!("{test_vector_path}.circuit.zst"))
                 .unwrap()
-                .read_to_end(&mut compressed)
+                .read_to_end(&mut compressed_circuit)
                 .unwrap();
 
-            test_vector.serialized_circuit = zstd::decode_all(compressed.as_slice()).unwrap();
+            test_vector.serialized_circuit =
+                zstd::decode_all(compressed_circuit.as_slice()).unwrap();
             let mut cursor = Cursor::new(test_vector.serialized_circuit.as_slice());
             let circuit = Circuit::decode(&mut cursor).unwrap();
 
@@ -477,6 +549,13 @@ pub(crate) mod tests {
                 test_vector.serialized_circuit.len(),
                 "bytes left over after parsing circuit"
             );
+
+            // Not all test vectors have serialized proofs
+            if let Ok(mut file) = File::open(format!("{test_vector_path}.proof")) {
+                file.read_to_end(&mut test_vector.serialized_proof).unwrap();
+            }
+
+            assert_eq!(circuit.num_quads(), test_vector.quads as usize);
 
             (test_vector, circuit)
         }

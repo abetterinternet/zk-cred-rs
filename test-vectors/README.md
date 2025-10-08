@@ -10,15 +10,21 @@ document, or to the circuit serialization implementation in
 Presumably the test vector was generated from some intermediate version of longfellow-zk, but
 there's not much to be done with it.
 
-The test vector format is a JSON document describing the test vector, alongside a file containing
-the zstd compressed serialization of the circuit. Circuits are compressed using `zstd(1)` with
-default options:
+The test vector format is a JSON document describing the test vector. Alongside it are files
+containing:
+
+- the zstd compressed serialization of the circuit. Circuits are compressed using `zstd(1)` with
+  default options:
 
 ```sh
 > zstd --version
 *** Zstandard CLI (64-bit) v1.5.7, by Yann Collet ***
 > zstd /path/to/uncompressed/circuit test-vectors/circuit/circuit-name.circuit.zst
 ```
+
+- the serialization of the padded sumcheck proof of the evaluation of the circuit. These are not
+  compressed since proofs are padded with random values and thus don't compress efficiently. Not
+  every test vector includes a proof.
 
 [longfellow-circuit-proto]: https://github.com/google/longfellow-zk/blob/main/lib/proto/circuit.h
 

@@ -36,6 +36,7 @@ pub trait FieldElement:
     const NUM_BITS: u32;
     const ZERO: Self;
     const ONE: Self;
+    const TWO: Self;
 
     /// Number of bytes needed to represent a field element.
     fn num_bytes() -> usize {
@@ -332,17 +333,18 @@ mod tests {
 
     #[allow(clippy::op_ref, clippy::eq_op)]
     fn field_element_test<F: FieldElement>() {
-        let two = F::from(2);
-        let four = F::from(4);
+        let three = F::from(3);
+        let nine = F::from(9);
         let neg_one = -F::ONE;
 
         assert_eq!(F::from(0), F::ZERO);
         assert_eq!(F::from(1), F::ONE);
+        assert_eq!(F::from(2), F::TWO);
 
         assert_ne!(F::ZERO, F::ONE);
-        assert_ne!(F::ONE, two);
-        assert_ne!(two, four);
-        assert_ne!(four, neg_one);
+        assert_ne!(F::ONE, three);
+        assert_ne!(three, nine);
+        assert_ne!(nine, neg_one);
 
         assert_eq!(neg_one + &F::ONE, F::ZERO);
         assert_eq!(neg_one + F::ONE, F::ZERO);
@@ -350,43 +352,43 @@ mod tests {
         temp += F::ONE;
         assert_eq!(temp, F::ZERO);
 
-        assert_eq!(F::ONE + &F::ONE, two);
-        assert_eq!(F::ONE + F::ONE, two);
+        assert_eq!(F::ONE + &F::ONE, F::TWO);
+        assert_eq!(F::ONE + F::ONE, F::TWO);
         let mut temp = F::ONE;
         temp += F::ONE;
-        assert_eq!(temp, two);
+        assert_eq!(temp, F::TWO);
 
-        assert_eq!(two + &F::ZERO, two);
-        assert_eq!(two + F::ZERO, two);
-        let mut temp = two;
+        assert_eq!(three + &F::ZERO, three);
+        assert_eq!(three + F::ZERO, three);
+        let mut temp = three;
         temp += F::ZERO;
-        assert_eq!(temp, two);
+        assert_eq!(temp, three);
 
-        assert_eq!(two * &two, four);
-        assert_eq!(two * two, four);
-        assert_eq!(two * &F::ONE, two);
-        assert_eq!(two * F::ONE, two);
-        assert_eq!(two * &F::ZERO, F::ZERO);
-        assert_eq!(two * F::ZERO, F::ZERO);
+        assert_eq!(three * &three, nine);
+        assert_eq!(three * three, nine);
+        assert_eq!(three * &F::ONE, three);
+        assert_eq!(three * F::ONE, three);
+        assert_eq!(three * &F::ZERO, F::ZERO);
+        assert_eq!(three * F::ZERO, F::ZERO);
 
         let mut temp = F::ONE;
         temp *= F::ONE;
         assert_eq!(temp, F::ONE);
-        temp *= two;
-        assert_eq!(temp, two);
-        temp *= two;
-        assert_eq!(temp, two + two);
+        temp *= three;
+        assert_eq!(temp, three);
+        temp *= three;
+        assert_eq!(temp, three + three + three);
 
         assert_eq!(-neg_one, F::ONE);
 
         assert_eq!(F::ONE - F::ONE, F::ZERO);
         assert_eq!(F::ZERO - F::ONE, neg_one);
-        assert_eq!(two - F::ZERO, two);
-        let mut temp = two;
+        assert_eq!(three - F::ZERO, three);
+        let mut temp = three;
         temp -= F::ONE;
-        assert_eq!(temp, F::ONE);
+        assert_eq!(temp, F::TWO);
 
-        for x in [F::ZERO, F::ONE, two, four, neg_one] {
+        for x in [F::ZERO, F::ONE, three, nine, neg_one] {
             let encoded = x.get_encoded().unwrap();
             assert_eq!(encoded.len(), F::num_bytes());
             let mut cursor = Cursor::new(&encoded[..]);
