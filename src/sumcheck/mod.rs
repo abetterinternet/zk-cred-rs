@@ -133,8 +133,8 @@ impl<FE: FieldElement> Proof<FE> {
             // Specification interpretation verification: Because the length of g is the same as the
             // number of bits needed to describe wires on this layer (logw), bound_quad[g, l, r] = 0
             // for any g > 0. Thus bound_quad is effectively two-dimensional.
-            for index in 1..bound_quad.len() {
-                assert!(bound_quad[index].is_empty());
+            for item in bound_quad.iter().skip(1) {
+                assert!(item.is_empty());
             }
 
             // Reduce bound_quad to a Vec<Vec<FE>> so that we can later bind to the correct
