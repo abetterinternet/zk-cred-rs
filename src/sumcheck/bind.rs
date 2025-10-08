@@ -26,19 +26,6 @@ pub trait SumcheckArray<FieldElement>: Sized {
     // TODO: provide in-place version?
     fn bind(&self, binding: &[FieldElement]) -> Self;
 
-    /// Same as [`Self::bind`], but asserts that this array has not already been reduced to a single
-    /// element.
-    fn bind_assert(&self, binding: &[FieldElement]) -> Self {
-        // Specification interpretation verification: we expect to be binding down to a single
-        // element, but no further.
-        assert!(
-            self.outer_dimension_len() > 1,
-            "binding over a dimension that's already reduced to a single element"
-        );
-
-        self.bind(binding)
-    }
-
     /// Multiply each element in the array by the scalar.
     // TODO: provide in-place version?
     fn scale(&self, scalar: FieldElement) -> Self;
@@ -48,9 +35,6 @@ pub trait SumcheckArray<FieldElement>: Sized {
     /// rectangular array.
     // TODO: provide in-place version?
     fn transpose(&self) -> Self;
-
-    /// Count of elements in the array's outer dimension.
-    fn outer_dimension_len(&self) -> usize;
 }
 
 impl<FE: FieldElement> SumcheckArray<FE> for Vec<FE> {
@@ -61,6 +45,13 @@ impl<FE: FieldElement> SumcheckArray<FE> for Vec<FE> {
     }
 
     fn bind(&self, binding: &[FE]) -> Self {
+        // Specification interpretation verification: we expect to be binding down to a single
+        // element, but no further.
+        assert!(
+            binding.is_empty() || self.len() > 1,
+            "binding over a dimension that's already reduced to a single element"
+        );
+
         let mut bound = self.clone();
         for binding_element in binding {
             // B[i] = (1 - x) * A[2 * i] + x * A[2 * i + 1]
@@ -85,10 +76,6 @@ impl<FE: FieldElement> SumcheckArray<FE> for Vec<FE> {
         // no-op: can't transpose a 1D array
         self.clone()
     }
-
-    fn outer_dimension_len(&self) -> usize {
-        self.len()
-    }
 }
 
 impl<FE: FieldElement> SumcheckArray<FE> for Vec<Vec<FE>> {
@@ -102,6 +89,13 @@ impl<FE: FieldElement> SumcheckArray<FE> for Vec<Vec<FE>> {
     }
 
     fn bind(&self, binding: &[FE]) -> Self {
+        // Specification interpretation verification: we expect to be binding down to a single
+        // element, but no further.
+        assert!(
+            binding.is_empty() || self.len() > 1,
+            "binding over a dimension that's already reduced to a single element"
+        );
+
         let mut bound = self.clone();
         for binding_element in binding {
             // The back half of B[i] will always be zero so we can skip computing those elements
@@ -155,10 +149,6 @@ impl<FE: FieldElement> SumcheckArray<FE> for Vec<Vec<FE>> {
 
         transposed
     }
-
-    fn outer_dimension_len(&self) -> usize {
-        self.len()
-    }
 }
 
 impl<FE: FieldElement> SumcheckArray<FE> for Vec<Vec<Vec<FE>>> {
@@ -173,6 +163,13 @@ impl<FE: FieldElement> SumcheckArray<FE> for Vec<Vec<Vec<FE>>> {
     }
 
     fn bind(&self, binding: &[FE]) -> Self {
+        // Specification interpretation verification: we expect to be binding down to a single
+        // element, but no further.
+        assert!(
+            binding.is_empty() || self.len() > 1,
+            "binding over a dimension that's already reduced to a single element"
+        );
+
         let mut bound = self.clone();
         for binding_element in binding {
             // The back half of B[i] is always zero so we can skip computing those elements.
@@ -211,10 +208,6 @@ impl<FE: FieldElement> SumcheckArray<FE> for Vec<Vec<Vec<FE>>> {
 
     fn transpose(&self) -> Self {
         self.iter().map(Vec::transpose).collect()
-    }
-
-    fn outer_dimension_len(&self) -> usize {
-        self.len()
     }
 }
 

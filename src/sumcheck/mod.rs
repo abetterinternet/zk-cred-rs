@@ -67,6 +67,7 @@ impl<FE: FieldElement> Proof<FE> {
         // number of bits needed to describe an output wire, because the idea is that binding to
         // challenges of this length will reduce the 3D quad down to 2D.
         let output_wire_bindings = transcript.generate_challenge(circuit.logw())?;
+
         // longfellow-zk allocates two 40 element arrays and then re-uses them for each layer's
         // bindings. This saves allocations, but you have to keep track of the current length of the
         // bindings when calling SumcheckArray::bind. We could probably simulate that by taking a
@@ -190,11 +191,9 @@ impl<FE: FieldElement> Proof<FE> {
                     // Let p(x) = SUM_{l, r} bind(QUAD, x)[l, r] * bind(VL, x)[l] * VR[r]
                     let evaluate_polynomial = |at: FE| {
                         let bind = &[at];
-                        // Recall that we effectively reduced the dimension of the combined quad to
-                        // 2 by binding it. Now we have to _actually_ reduce it to a Vec<Vec<FE>> so
-                        // that the binding will be applied appropriately.
-                        let bound_quad_at = bound_quad.bind_assert(bind);
-                        let bound_left_wires = left_wires.bind_assert(bind);
+
+                        let bound_quad_at = bound_quad.bind(bind);
+                        let bound_left_wires = left_wires.bind(bind);
 
                         // Specification interpretation verification: the back half of
                         // bound_left_wires should be zeroes after binding.
@@ -214,8 +213,6 @@ impl<FE: FieldElement> Proof<FE> {
                         for left_wire_index in 0..left_wires.len().div_ceil(2) {
                             for right_wire_index in 0..right_wires.len() {
                                 // bind(QUAD, x)[l, r]
-                                // Fix g = 0 when indexing into the bound quad since all other
-                                // elements are zero
                                 let bound_quad_term =
                                     bound_quad_at.element([left_wire_index, right_wire_index]);
                                 // bind(VL, x)[l]
@@ -248,7 +245,7 @@ impl<FE: FieldElement> Proof<FE> {
                     new_bindings[hand][round] = challenge[0];
 
                     // Bind the current left wires and the quad to the challenge
-                    left_wires = left_wires.bind_assert(&challenge);
+                    left_wires = left_wires.bind(&challenge);
                     bound_quad = bound_quad.bind(&challenge);
 
                     swap(&mut left_wires, &mut right_wires);
