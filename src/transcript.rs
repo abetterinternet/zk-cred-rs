@@ -110,9 +110,9 @@ impl Transcript {
     ///
     /// https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-01#section-3.1.2
     pub fn write_byte_array(&mut self, bytes: &[u8]) -> Result<(), anyhow::Error> {
+        println!("write byte array {bytes:02x?}");
         // Length prefix is 8 bytes, so reject slices that are too big
-        // TODO: casting u64 to usize won't work on LP32
-        if bytes.len() > u64::MAX as usize {
+        if bytes.len() > usize::try_from(u64::MAX).context("can't fit u64::MAX in a usize")? {
             return Err(anyhow!("byte array too big for transcript"));
         }
 

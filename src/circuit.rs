@@ -142,6 +142,11 @@ impl Circuit {
         )
     }
 
+    /// The number of quads (aka terms?) in this circuit.
+    pub fn num_quads(&self) -> usize {
+        self.layers.iter().map(|layer| layer.quads.len()).sum()
+    }
+
     /// Evaluate the circuit with the provided inputs.
     ///
     /// Bugs: taking inputs as u128 is inadequate for larger fields like P256.
@@ -321,8 +326,11 @@ impl<FieldElement> Evaluation<FieldElement> {
 
     /// Get the public inputs for this evaluation.
     pub fn public_inputs(&self, num_public_inputs: usize) -> &[FieldElement] {
-        // We prepended 1 to the input layer in Circuit::evaluate, so skip that here
-        &self.wires[self.wires.len() - 1][1..(num_public_inputs + 1)]
+        &self.inputs()[..num_public_inputs]
+    }
+
+    pub fn inputs(&self) -> &[FieldElement] {
+        &self.wires[self.wires.len() - 1]
     }
 }
 
@@ -546,6 +554,8 @@ pub(crate) mod tests {
             if let Ok(mut file) = File::open(format!("{test_vector_path}.proof")) {
                 file.read_to_end(&mut test_vector.serialized_proof).unwrap();
             }
+
+            assert_eq!(circuit.num_quads(), test_vector.quads as usize);
 
             (test_vector, circuit)
         }

@@ -76,9 +76,9 @@ impl<FE: FieldElement> Proof<FE> {
         // Initialize the transcript per "special rules for the first message", with adjustments to
         // match longfellow-zk.
         // https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-01#section-3.1.3
-        // 3.1.3 item 1 says to append the "Prover message", "which is usually a commitment". I
-        // interpret that to mean the first thing written after the session ID (which was handled in
-        // Transcript::initialize). But longfellow-zk doesn't do this, so we don't either..
+        // 3.1.3 item 1 says to append the "Prover message", "which is usually a commitment".
+        // longfellow-zk doesn't do this at this stage, but see remark below.
+
         // 3.1.3 item 2: write circuit ID
         transcript.write_byte_array(&circuit.id)?;
         // 3.1.3 item 2: write inputs. Per the specification, this should be an array of field
@@ -97,6 +97,16 @@ impl<FE: FieldElement> Proof<FE> {
         for output in evaluation.outputs() {
             assert_eq!(output, &FE::ZERO);
         }
+
+        // 3.1.3 item 3: write an array of zero bytes. The spec implies that its length should be
+        // the number of arithmetic gates in the circuit, but longfellow-zk uses the number of quads
+        // aka the number of terms.
+        transcript.write_byte_array(vec![0u8; circuit.num_quads()].as_slice())?;
+
+        // After Fiat-Shamir initialization, but before proving the layers, longfellow-zk writes all
+        // the inputs to the circuit (public and private) to the transcript. This presumably
+        // constitutes the "prover message" described in 3.1.3 item 1.
+        transcript.write_field_element_array(evaluation.inputs())?;
 
         for (layer_index, layer) in circuit.layers.iter().enumerate() {
             // Choose alpha and beta for this layer
@@ -225,9 +235,10 @@ impl<FE: FieldElement> Proof<FE> {
                         p2: evaluate_polynomial(FE::TWO) - pad_polynomials[hand].p2,
                     };
 
-                    // Commit to the padded polynomial.
-                    transcript
-                        .write_field_element_array(&[poly_evaluation.p0, poly_evaluation.p2])?;
+                    // Commit to the padded polynomial. The spec isn't clear on this, but
+                    // longfellow-zk writes individual field elements.
+                    transcript.write_field_element(&poly_evaluation.p0)?;
+                    transcript.write_field_element(&poly_evaluation.p2)?;
 
                     proof_polynomials[hand] = poly_evaluation;
 
@@ -261,9 +272,9 @@ impl<FE: FieldElement> Proof<FE> {
                 vr: right_wires.element(0) - layer_pad.vr,
             };
 
-            // Commit to the padded evaluations of l and r
-            transcript.write_field_element(&layer_proof.vl)?;
-            transcript.write_field_element(&layer_proof.vr)?;
+            // Commit to the padded evaluations of l and r. The specification implies they are
+            // written as individual field elements, but longfellow-zk writes them as an array.
+            transcript.write_field_element_array(&[layer_proof.vl, layer_proof.vr])?;
 
             proof.layers.push(layer_proof);
 
@@ -375,13 +386,15 @@ struct Polynomial<FE> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{circuit::tests::CircuitTestVector, fields::fieldp128::FieldP128};
+    use crate::{Size, circuit::tests::CircuitTestVector, fields::fieldp128::FieldP128};
     use std::io::Cursor;
 
     #[test]
     fn longfellow_rfc_1_87474f308020535e57a778a82394a14106f8be5b() {
         let (test_vector, circuit) =
             CircuitTestVector::decode("longfellow-rfc-1-87474f308020535e57a778a82394a14106f8be5b");
+
+        assert_eq!(circuit.num_copies, Size(1));
 
         // This circuit verifies that 2n = (s-2)m^2 - (s - 4)*m. For example, C(45, 5, 6) = 0.
         let evaluation: Evaluation<FieldP128> = circuit.evaluate(&[45, 5, 6]).unwrap();
