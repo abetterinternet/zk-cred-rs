@@ -206,7 +206,11 @@ impl TryFrom<SerializedFieldElement> for u128 {
 
 pub mod fieldp128;
 pub mod fieldp256;
+pub mod fieldp256_2;
 pub mod fieldp521;
+
+mod quadratic_extension;
+use quadratic_extension::QuadraticExtension;
 
 #[cfg(test)]
 mod tests {
@@ -216,7 +220,7 @@ mod tests {
         Codec,
         fields::{
             FieldElement, FieldId, SerializedFieldElement, WireFieldElement, fieldp128::FieldP128,
-            fieldp256::FieldP256,
+            fieldp256::FieldP256, fieldp256_2::FieldP256_2,
         },
     };
     use std::io::Cursor;
@@ -445,6 +449,11 @@ mod tests {
     fn test_field_p521() {
         field_element_test_large_characteristic::<FieldP521>();
         field_element_test_codec::<FieldP521>();
+    }
+
+    #[test]
+    fn test_field_p256_squared() {
+        field_element_test_large_characteristic::<FieldP256_2>();
     }
 
     #[test]
