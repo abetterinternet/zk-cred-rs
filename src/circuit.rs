@@ -1,6 +1,6 @@
 use crate::{
     Codec, Size,
-    fields::{FieldElement, FieldId, SerializedFieldElement},
+    fields::{FieldId, SerializedFieldElement, WireFieldElement},
 };
 use anyhow::{Context, anyhow};
 use educe::Educe;
@@ -131,7 +131,7 @@ impl Circuit {
     }
 
     /// Retrieve the requested constant from the circuit's constant table, if it exists.
-    pub fn constant<F: FieldElement>(&self, index: Size) -> Result<F, anyhow::Error> {
+    pub fn constant<F: WireFieldElement>(&self, index: Size) -> Result<F, anyhow::Error> {
         F::try_from(
             &self
                 .constant_table
@@ -150,7 +150,7 @@ impl Circuit {
     /// Evaluate the circuit with the provided inputs.
     ///
     /// Bugs: taking inputs as u128 is inadequate for larger fields like P256.
-    pub fn evaluate<FE: FieldElement>(
+    pub fn evaluate<FE: WireFieldElement>(
         &self,
         inputs: &[u128],
     ) -> Result<Evaluation<FE>, anyhow::Error> {
@@ -271,7 +271,7 @@ impl Circuit {
     /// Because Q and Z are disjoint, this amounts to traversing the layer's quads, identifying Z
     /// quads (the ones whose value is zero) and setting their value to beta. This is then compiled
     /// into a three-dimensional array indexed by gate index, left wire index, and right wire index.
-    pub fn combined_quad<FE: FieldElement>(
+    pub fn combined_quad<FE: WireFieldElement>(
         &self,
         layer_index: usize,
         beta: FE,
@@ -465,7 +465,7 @@ pub(crate) mod tests {
         Codec, Size,
         circuit::{Circuit, CircuitLayer, Evaluation, Quad},
         fields::{
-            FieldElement, FieldId, SerializedFieldElement, fieldp128::FieldP128,
+            FieldElement, FieldId, SerializedFieldElement, WireFieldElement, fieldp128::FieldP128,
             fieldp256::FieldP256,
         },
     };
@@ -561,7 +561,7 @@ pub(crate) mod tests {
         }
     }
 
-    fn roundtrip_circuit_test_vector<FE: FieldElement>(name: &'static str) {
+    fn roundtrip_circuit_test_vector<FE: WireFieldElement>(name: &'static str) {
         let (test_vector, circuit) = CircuitTestVector::decode(name);
 
         // Verifies that circuits conform to a few invariants that we have interpreted from the

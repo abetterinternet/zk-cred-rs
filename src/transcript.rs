@@ -3,7 +3,7 @@
 //!
 //! https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-00#section-3
 
-use crate::fields::FieldElement;
+use crate::fields::WireFieldElement;
 use aes::{
     Aes256,
     cipher::{BlockEncrypt, KeyInit},
@@ -71,7 +71,7 @@ impl Transcript {
     /// Write a field element to the transcript.
     ///
     /// https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-00#section-3.1.2
-    pub fn write_field_element<FE: FieldElement>(
+    pub fn write_field_element<FE: WireFieldElement>(
         &mut self,
         field_element: &FE,
     ) -> Result<(), anyhow::Error> {
@@ -84,7 +84,7 @@ impl Transcript {
         Ok(())
     }
 
-    pub fn write_field_element_array<FE: FieldElement>(
+    pub fn write_field_element_array<FE: WireFieldElement>(
         &mut self,
         field_elements: &[FE],
     ) -> Result<(), anyhow::Error> {
@@ -156,7 +156,7 @@ impl Transcript {
     }
 
     /// Generate a challenge, consisting of `length` field elements.
-    pub fn generate_challenge<FE: FieldElement>(
+    pub fn generate_challenge<FE: WireFieldElement>(
         &mut self,
         length: usize,
     ) -> Result<Vec<FE>, anyhow::Error> {
@@ -209,7 +209,7 @@ impl FiatShamirPseudoRandomFunction {
     }
 
     /// Sample a field element from this FSPRF.
-    pub fn sample_field_element<FE: FieldElement>(&mut self) -> FE {
+    pub fn sample_field_element<FE: WireFieldElement>(&mut self) -> FE {
         FE::sample_from_source(|num_bytes| self.take(num_bytes).collect::<Vec<_>>())
     }
 }

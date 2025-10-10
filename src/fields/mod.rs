@@ -13,11 +13,14 @@ use std::{
 };
 use subtle::{Choice, ConstantTimeEq};
 
+/// An element of a finite field.
 pub trait FieldElement:
     Debug
     + Clone
     + Copy
     + ConstantTimeEq
+    + PartialEq
+    + Eq
     + Default
     + From<u64>
     + Add<Output = Self>
@@ -30,18 +33,16 @@ pub trait FieldElement:
     + for<'a> Mul<&'a Self, Output = Self>
     + MulAssign
     + Neg<Output = Self>
-    + for<'a> TryFrom<&'a [u8], Error = anyhow::Error>
-    + Codec
 {
-    const NUM_BITS: u32;
+    /// The additive identity of the field.
     const ZERO: Self;
+    /// The multiplicative of the field.
     const ONE: Self;
+    /// 1 + 1 in the field, if applicable.
+    ///
+    /// TODO: This will need to be renamed for characteristic two fields. We need a third evaluation
+    /// point for the sumcheck protocol, and the spec's convention is to use x for GF(2)\[x\]/(Q(x)).
     const TWO: Self;
-
-    /// Number of bytes needed to represent a field element.
-    fn num_bytes() -> usize {
-        (Self::NUM_BITS as usize).div_ceil(8)
-    }
 
     /// Project an integer into the field.
     fn from_u128(value: u128) -> Self;
@@ -49,6 +50,19 @@ pub trait FieldElement:
     /// Test whether this element is zero.
     fn is_zero(&self) -> Choice {
         self.ct_eq(&Self::ZERO)
+    }
+}
+
+/// An element of a finite field with a defined serialization format.
+pub trait WireFieldElement:
+    FieldElement + for<'a> TryFrom<&'a [u8], Error = anyhow::Error> + Codec
+{
+    /// Number of bits needed to represent a field element.
+    const NUM_BITS: u32;
+
+    /// Number of bytes needed to represent a field element.
+    fn num_bytes() -> usize {
+        (Self::NUM_BITS as usize).div_ceil(8)
     }
 
     /// Generate a field element by rejection sampling.
@@ -192,7 +206,11 @@ impl TryFrom<SerializedFieldElement> for u128 {
 
 pub mod fieldp128;
 pub mod fieldp256;
+pub mod fieldp256_2;
 pub mod fieldp521;
+
+mod quadratic_extension;
+use quadratic_extension::QuadraticExtension;
 
 #[cfg(test)]
 mod tests {
@@ -201,8 +219,8 @@ mod tests {
     use crate::{
         Codec,
         fields::{
-            FieldElement, FieldId, SerializedFieldElement, fieldp128::FieldP128,
-            fieldp256::FieldP256,
+            FieldElement, FieldId, SerializedFieldElement, WireFieldElement, fieldp128::FieldP128,
+            fieldp256::FieldP256, fieldp256_2::FieldP256_2,
         },
     };
     use std::io::Cursor;
@@ -332,7 +350,7 @@ mod tests {
     }
 
     #[allow(clippy::op_ref, clippy::eq_op)]
-    fn field_element_test<F: FieldElement>() {
+    fn field_element_test_large_characteristic<F: FieldElement>() {
         let three = F::from(3);
         let nine = F::from(9);
         let neg_one = -F::ONE;
@@ -387,7 +405,12 @@ mod tests {
         let mut temp = three;
         temp -= F::ONE;
         assert_eq!(temp, F::TWO);
+    }
 
+    fn field_element_test_codec<F: WireFieldElement>() {
+        let three = F::from(3);
+        let nine = F::from(9);
+        let neg_one = -F::ONE;
         for x in [F::ZERO, F::ONE, three, nine, neg_one] {
             let encoded = x.get_encoded().unwrap();
             assert_eq!(encoded.len(), F::num_bytes());
@@ -412,17 +435,25 @@ mod tests {
 
     #[test]
     fn test_field_p256() {
-        field_element_test::<FieldP256>();
+        field_element_test_large_characteristic::<FieldP256>();
+        field_element_test_codec::<FieldP256>();
     }
 
     #[test]
     fn test_field_p128() {
-        field_element_test::<FieldP128>();
+        field_element_test_large_characteristic::<FieldP128>();
+        field_element_test_codec::<FieldP128>();
     }
 
     #[test]
     fn test_field_p521() {
-        field_element_test::<FieldP521>();
+        field_element_test_large_characteristic::<FieldP521>();
+        field_element_test_codec::<FieldP521>();
+    }
+
+    #[test]
+    fn test_field_p256_squared() {
+        field_element_test_large_characteristic::<FieldP256_2>();
     }
 
     #[test]

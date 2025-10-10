@@ -11,7 +11,7 @@ use subtle::ConstantTimeEq;
 use crate::{
     Codec,
     fields::{
-        FieldElement,
+        FieldElement, WireFieldElement,
         fieldp521::ops::{
             fiat_p521_carry_add, fiat_p521_carry_mul, fiat_p521_carry_opp, fiat_p521_carry_sub,
             fiat_p521_from_bytes, fiat_p521_loose_field_element, fiat_p521_relax,
@@ -62,7 +62,6 @@ impl FieldP521 {
 }
 
 impl FieldElement for FieldP521 {
-    const NUM_BITS: u32 = 521;
     const ZERO: Self = Self(fiat_p521_tight_field_element([0; 9]));
     const ONE: Self = Self::from_u128_const(1);
     const TWO: Self = Self::from_u128_const(2);
@@ -70,6 +69,10 @@ impl FieldElement for FieldP521 {
     fn from_u128(value: u128) -> Self {
         Self::from_u128_const(value)
     }
+}
+
+impl WireFieldElement for FieldP521 {
+    const NUM_BITS: u32 = 521;
 }
 
 impl Debug for FieldP521 {
