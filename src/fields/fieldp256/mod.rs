@@ -11,7 +11,7 @@ use subtle::ConstantTimeEq;
 use crate::{
     Codec,
     fields::{
-        FieldElement,
+        FieldElement, WireFieldElement,
         fieldp256::ops::{
             fiat_p256_add, fiat_p256_from_bytes, fiat_p256_from_montgomery,
             fiat_p256_montgomery_domain_field_element, fiat_p256_mul,
@@ -71,7 +71,6 @@ impl FieldP256 {
 }
 
 impl FieldElement for FieldP256 {
-    const NUM_BITS: u32 = 256;
     const ZERO: Self = Self(fiat_p256_montgomery_domain_field_element([0; 4]));
     const ONE: Self = Self::from_u128_const(1);
     const TWO: Self = Self::from_u128_const(2);
@@ -79,6 +78,10 @@ impl FieldElement for FieldP256 {
     fn from_u128(value: u128) -> Self {
         Self::from_u128_const(value)
     }
+}
+
+impl WireFieldElement for FieldP256 {
+    const NUM_BITS: u32 = 256;
 }
 
 impl Debug for FieldP256 {

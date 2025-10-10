@@ -4,7 +4,7 @@
 
 use crate::{
     circuit::{Circuit, CircuitLayer, Evaluation},
-    fields::FieldElement,
+    fields::WireFieldElement,
     sumcheck::bind::{ElementwiseSum, SumcheckArray},
     transcript::Transcript,
 };
@@ -18,7 +18,7 @@ pub struct Proof<FieldElement> {
     layers: Vec<ProofLayer<FieldElement>>,
 }
 
-impl<FE: FieldElement> Proof<FE> {
+impl<FE: WireFieldElement> Proof<FE> {
     /// Decode a proof from the bytes. This can't be an implementation of [`Codec`] because we need
     /// the circuit this is a proof of to know how many layers there are.
     pub fn decode(
@@ -46,7 +46,7 @@ impl<FE: FieldElement> Proof<FE> {
     }
 }
 
-impl<FE: FieldElement> Proof<FE> {
+impl<FE: WireFieldElement> Proof<FE> {
     /// Construct a padded proof of the transcript of the given evaluation of the circuit and return
     /// the prover messages needed for the verifier to reconstruct the transcript.
     pub fn new<PadGenerator>(
@@ -307,7 +307,7 @@ struct ProofLayer<FieldElement> {
 /// Proof layer serialization corresponds to PaddedTranscriptLayer in [7.3][1].
 ///
 /// https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-01#section-7.3
-impl<FE: FieldElement> ProofLayer<FE> {
+impl<FE: WireFieldElement> ProofLayer<FE> {
     /// Decode a proof layer from the bytes. We can't implement [`Codec`] here because we need some
     /// context (the corresponding circuit layer) to determine how many elements the layer should
     /// contain.
@@ -391,7 +391,11 @@ struct Polynomial<FE> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Size, circuit::tests::CircuitTestVector, fields::fieldp128::FieldP128};
+    use crate::{
+        Size,
+        circuit::tests::CircuitTestVector,
+        fields::{FieldElement, fieldp128::FieldP128},
+    };
     use std::io::Cursor;
 
     #[test]
